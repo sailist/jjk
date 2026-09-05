@@ -65,11 +65,14 @@ const defaultGroupName = (
   if (pathEquals(repositoryRoot, workspaceRoot)) {
     return "Main";
   }
-  const rel = path.relative(repositoryRoot, workspaceRoot);
-  if (rel === "" || rel.startsWith("..") || path.isAbsolute(rel)) {
-    return "Other";
+  const parent = path.dirname(path.relative(repositoryRoot, workspaceRoot));
+  const segments = parent
+    .split(path.sep)
+    .filter((segment) => segment !== ".." && segment !== ".");
+  if (segments.length === 0) {
+    return "(root)";
   }
-  return rel.split(path.sep)[0];
+  return segments.join("/");
 };
 
 const groupNameFor = (
@@ -124,12 +127,7 @@ export class WorkspaceTreeItem extends TreeItem {
       ...(workspace.isConflict ? ["conflict"] : []),
       ...(stale ? ["stale"] : []),
     ].join(", ");
-    const rel = pathEquals(repositoryRoot, workspace.root)
-      ? "."
-      : path.relative(repositoryRoot, workspace.root);
-    this.description = [badges ? `(${badges})` : "", rel]
-      .filter((part) => part !== "")
-      .join(" ");
+    this.description = badges ? `(${badges})` : "";
     this.tooltip = `${workspace.root}\ntarget: ${workspace.targetChangeId}`;
     this.iconPath = new ThemeIcon(active ? "check" : "repo");
     this.command = {
