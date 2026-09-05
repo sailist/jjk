@@ -9,3 +9,4 @@ import "./fakeeditor.test";
 import "./scm.test";
 import "./fileSystemProvider.test";
 import "./workspaceFolders.test";
+import "./utils.test";

@@ -3,6 +3,7 @@ import * as vscode from "vscode";
 import type { WorkspaceSourceControlManager } from "../repoHandle";
 import type * as UriModule from "../uri";
 import type * as GraphWebviewModule from "../graphWebview";
+import type * as WorkspacesTreeViewModule from "../workspacesTreeView";
 
 type ExtensionAPI = {
   workspaceSCM: WorkspaceSourceControlManager;
@@ -12,10 +13,12 @@ type ExtensionAPI = {
       input: string,
     ) => { fromPath: string; toPath: string } | null;
     resolveRepoPath: (workspaceRoot: string) => string;
+    isJjInternalPath: (root: string, fsPath: string) => boolean;
     fakeEditorPath: string;
     ImmutableError: new (message: string) => Error;
   };
   graphWebview: typeof GraphWebviewModule;
+  workspacesTreeView: typeof WorkspacesTreeViewModule;
 };
 
 export async function getExtensionAPI(): Promise<ExtensionAPI> {

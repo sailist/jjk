@@ -1,6 +1,7 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
 import * as path from "path";
+import * as os from "os";
 import * as fs from "fs/promises";
 import { execJJPromise } from "./utils";
 import { getExtensionAPI } from "./extensionApi";
@@ -8,6 +9,7 @@ import type { WorkspaceSourceControlManager } from "../repoHandle";
 
 suite("SCM Integration Tests", () => {
   let workspaceSCM: WorkspaceSourceControlManager;
+  let WorkspaceTreeItem: typeof import("../workspacesTreeView").WorkspaceTreeItem;
   let repoRoot: string;
   let originalOperation: string;
 
@@ -16,6 +18,7 @@ suite("SCM Integration Tests", () => {
 
     const api = await getExtensionAPI();
     workspaceSCM = api.workspaceSCM;
+    WorkspaceTreeItem = api.workspacesTreeView.WorkspaceTreeItem;
 
     // Wait for initial repo detection if needed
     if (workspaceSCM.repoSCMs.length === 0) {
@@ -129,5 +132,69 @@ suite("SCM Integration Tests", () => {
       fileInParent,
       `Expected ${testFileName} in parent resource group, but found: ${parentStates.map((s) => path.basename(s.resourceUri.fsPath)).join(", ") || "(empty)"}`,
     );
+  });
+
+  test("active workspace changes view refreshes on file save without manual refresh", async function () {
+    this.timeout(30_000);
+    const repoSCM = workspaceSCM.repoSCMs[0];
+
+    const wsName = "jjktestws";
+    const wsRoot = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "jjk-test-ws-")),
+    );
+
+    const showWorkspace = (name: string, root: string, active: boolean) =>
+      vscode.commands.executeCommand(
+        "jj.workspaceShow",
+        new WorkspaceTreeItem(
+          {
+            name,
+            root,
+            targetChangeId: "",
+            isEmpty: false,
+            isConflict: false,
+            isDivergent: false,
+          },
+          repoRoot,
+          false,
+          active,
+          false,
+        ),
+      );
+
+    try {
+      await execJJPromise(`workspace add --name ${wsName} "${wsRoot}"`, {
+        cwd: repoRoot,
+        timeout: 10_000,
+      });
+
+      await showWorkspace(wsName, wsRoot, true);
+
+      const testFileName = "ws-integration-file.txt";
+      const testFilePath = path.join(wsRoot, testFileName);
+      await fs.writeFile(testFilePath, "hello from workspace test\n");
+      const doc = await vscode.workspace.openTextDocument(testFilePath);
+      await vscode.window.showTextDocument(doc);
+      await doc.save();
+
+      // The working copy watcher must pick up the save on its own; no
+      // jj.refresh here, so a missing trigger fails the test.
+      let addedFile;
+      for (let i = 0; i < 150 && !addedFile; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        addedFile = repoSCM.workingCopyResourceGroup.resourceStates.find(
+          (state) => state.resourceUri.fsPath.endsWith(testFileName),
+        );
+      }
+      assert.ok(
+        addedFile,
+        `Expected ${testFileName} in active workspace's working copy resource group without manual refresh, but found: ${repoSCM.workingCopyResourceGroup.resourceStates.map((s) => path.basename(s.resourceUri.fsPath)).join(", ") || "(empty)"}`,
+      );
+    } finally {
+      await showWorkspace("default", repoRoot, false);
+      await execJJPromise(`workspace forget ${wsName}`, { cwd: repoRoot });
+      await fs.rm(wsRoot, { recursive: true, force: true });
+      await vscode.commands.executeCommand("jj.refresh");
+    }
   });
 });

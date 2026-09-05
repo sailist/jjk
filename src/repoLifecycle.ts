@@ -29,7 +29,7 @@ import {
   provideOriginalResource,
 } from "./jjUtils";
 import { logger } from "./logger";
-import { pathEquals } from "./utils";
+import { isDescendant, isJjInternalPath, pathEquals } from "./utils";
 import type { RepoHandle } from "./repoHandle";
 import type { JJDecorationProvider } from "./decorationProvider";
 import type { JJFileSystemProviderNew } from "./fileSystemProviderNew";
@@ -88,9 +88,86 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
     return cache;
   };
 
+  interface WorkingCopyWatcher {
+    root: string;
+    disposables: vscode.Disposable[];
+    timer: ReturnType<typeof setTimeout> | undefined;
+  }
+  const workingCopyWatcherByRepo = new WeakMap<
+    RepoHandle,
+    WorkingCopyWatcher
+  >();
+
+  const disposeWorkingCopyWatcher = (repo: RepoHandle) => {
+    const entry = workingCopyWatcherByRepo.get(repo);
+    if (!entry) {
+      return;
+    }
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+    }
+    for (const disposable of entry.disposables) {
+      disposable.dispose();
+    }
+    workingCopyWatcherByRepo.delete(repo);
+  };
+
+  const syncWorkingCopyWatcher = (repo: RepoHandle) => {
+    const root = repo.activeWorkspace?.root;
+    const existing = workingCopyWatcherByRepo.get(repo);
+    if (existing && (!root || !pathEquals(existing.root, root))) {
+      disposeWorkingCopyWatcher(repo);
+    }
+    if (!root || workingCopyWatcherByRepo.has(repo)) {
+      return;
+    }
+    const entry: WorkingCopyWatcher = {
+      root,
+      disposables: [],
+      timer: undefined,
+    };
+    const scheduleReload = () => {
+      if (entry.timer) {
+        clearTimeout(entry.timer);
+      }
+      entry.timer = setTimeout(() => {
+        entry.timer = undefined;
+        applyRepoStateUpdate(repo, repo.mainState, {
+          ignoreOpIdCache: true,
+        });
+      }, 200);
+    };
+    const onWorkingCopyEvent = (uri: vscode.Uri) => {
+      if (isJjInternalPath(root, uri.fsPath)) {
+        return;
+      }
+      scheduleReload();
+    };
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(root, "**/*"),
+    );
+    entry.disposables.push(
+      watcher,
+      watcher.onDidCreate(onWorkingCopyEvent),
+      watcher.onDidChange(onWorkingCopyEvent),
+      watcher.onDidDelete(onWorkingCopyEvent),
+      vscode.workspace.onDidSaveTextDocument((document) => {
+        if (
+          document.uri.scheme === "file" &&
+          isDescendant(root, document.uri.fsPath) &&
+          !isJjInternalPath(root, document.uri.fsPath)
+        ) {
+          scheduleReload();
+        }
+      }),
+    );
+    workingCopyWatcherByRepo.set(repo, entry);
+  };
+
   const applyWorkspaceState = async (
     repo: RepoHandle,
     workspace: { name: string; root: string },
+    opts?: { ignoreOpIdCache?: boolean },
   ) => {
     const token = (workspaceStateLoadTokens.get(repo) ?? 0) + 1;
     workspaceStateLoadTokens.set(repo, token);
@@ -100,6 +177,7 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
       const cached = renderCache.states.get(workspace.name);
       if (
         cached &&
+        !opts?.ignoreOpIdCache &&
         cached.operationId !== undefined &&
         cached.operationId === repo.mainState.operationId
       ) {
@@ -207,11 +285,15 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
     }
   };
 
-  const applyRepoStateUpdate = (repo: RepoHandle, newState: RepoState) => {
+  const applyRepoStateUpdate = (
+    repo: RepoHandle,
+    newState: RepoState,
+    opts?: { ignoreOpIdCache?: boolean },
+  ) => {
     repo.mainState = newState;
     const renderCache = getRenderCache(repo);
     if (repo.activeWorkspace) {
-      void applyWorkspaceState(repo, repo.activeWorkspace);
+      void applyWorkspaceState(repo, repo.activeWorkspace, opts);
     } else {
       repo.currentState = newState;
       const renderKey = `main:${computeStateSignature(newState)}`;
@@ -380,6 +462,13 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
           Effect.sync(() => applyRepoStateUpdate(repo, newState));
 
         yield* Scope.extend(
+          Effect.addFinalizer(() =>
+            Effect.sync(() => disposeWorkingCopyWatcher(repo)),
+          ),
+          repoScope,
+        );
+
+        yield* Scope.extend(
           Effect.acquireRelease(
             Effect.sync(() =>
               deps.extensionRuntime.runFork(
@@ -512,7 +601,8 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
         { discard: true },
       ),
     refreshDisplayedState: (repo) => {
-      applyRepoStateUpdate(repo, repo.mainState);
+      syncWorkingCopyWatcher(repo);
+      applyRepoStateUpdate(repo, repo.mainState, { ignoreOpIdCache: true });
     },
   };
 };

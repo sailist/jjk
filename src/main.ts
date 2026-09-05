@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { Effect, ManagedRuntime, Scope } from "effect";
 import { resolveRepoPath } from "./jjUtils";
 import { parseRenamePaths } from "./parsers";
+import { isJjInternalPath } from "./utils";
 import { JJDecorationProvider } from "./decorationProvider";
 import {
   JJFileSystemProviderNew,
@@ -305,9 +306,11 @@ export async function activate(context: vscode.ExtensionContext) {
     workspaceSCM,
     uri: await import("./uri"),
     graphWebview: await import("./graphWebview"),
+    workspacesTreeView: await import("./workspacesTreeView"),
     repository: {
       parseRenamePaths,
       resolveRepoPath,
+      isJjInternalPath,
       fakeEditorPath: extensionResourcesConfig.fakeEditorPath,
       ImmutableError: class ImmutableError extends Error {
         constructor(message: string) {

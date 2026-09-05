@@ -64,7 +64,7 @@ export function computeStateSignature(state: RepoState): string {
 }
 
 function getLabel(prefix: string, change: Change) {
-  return `${prefix} [${change.changeId}]${
+  return `${prefix} [${change.changeId.substring(0, 8)}]${
     change.description ? ` • ${change.description}` : ""
   }${change.isEmpty ? " (empty)" : ""}${
     change.isConflict ? " (conflict)" : ""
@@ -161,22 +161,25 @@ export function applyRenderData(
   // Update parent groups: dispose stale ones
   const updatedGroups: vscode.SourceControlResourceGroup[] = [];
   for (const group of parentGroups) {
-    const parentChange = renderData.parentChanges.find(
+    const parentIndex = renderData.parentChanges.findIndex(
       (p) => p.change.changeId === group.id,
     );
-    if (!parentChange) {
+    if (parentIndex === -1) {
       group.dispose();
     } else {
-      group.label = getLabel("Parent Commit", parentChange.change);
+      group.label = getLabel(
+        `@${parentIndex + 1}`,
+        renderData.parentChanges[parentIndex].change,
+      );
       updatedGroups.push(group);
     }
   }
 
   // Create new groups or update existing
-  for (const {
-    change: parentChange,
-    fileStatuses,
-  } of renderData.parentChanges) {
+  for (const [
+    parentIndex,
+    { change: parentChange, fileStatuses },
+  ] of renderData.parentChanges.entries()) {
     let parentChangeResourceGroup: vscode.SourceControlResourceGroup;
 
     const existingGroup = updatedGroups.find(
@@ -185,7 +188,7 @@ export function applyRenderData(
     if (!existingGroup) {
       parentChangeResourceGroup = sourceControl.createResourceGroup(
         parentChange.changeId,
-        getLabel("Parent Commit", parentChange),
+        getLabel(`@${parentIndex + 1}`, parentChange),
       );
       updatedGroups.push(parentChangeResourceGroup);
     } else {

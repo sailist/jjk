@@ -1,4 +1,4 @@
-import { sep } from "path";
+import path, { sep } from "path";
 import { Event, Disposable, window, TabInputTextDiff } from "vscode";
 
 export const isMacintosh = process.platform === "darwin";
@@ -91,6 +91,14 @@ export function isDescendant(parent: string, descendant: string): boolean {
 
 export function pathEquals(a: string, b: string): boolean {
   return normalizePath(a) === normalizePath(b);
+}
+
+export function isJjInternalPath(root: string, fsPath: string): boolean {
+  const relative = path.relative(root, fsPath);
+  if (relative === "" || relative.startsWith("..")) {
+    return false;
+  }
+  return relative.split(sep).includes(".jj");
 }
 
 /**
