@@ -32,6 +32,37 @@ export function computeRenderData(state: RepoState): RenderData | null {
   };
 }
 
+export function computeStateSignature(state: RepoState): string {
+  const status = state.status;
+  if (!status) {
+    return "";
+  }
+  const fileSignature = (files: FileStatus[]) =>
+    files.map((file) => [file.type, file.path, file.renamedFrom ?? ""]);
+  return JSON.stringify([
+    [
+      status.workingCopy.changeId,
+      status.workingCopy.commitId,
+      status.workingCopy.description,
+      status.workingCopy.isEmpty,
+      status.workingCopy.isConflict,
+    ],
+    fileSignature(status.fileStatuses),
+    status.parentChanges.map((change) => {
+      const show = state.parentShowResults.get(change.changeId);
+      return [
+        change.changeId,
+        change.commitId,
+        change.description,
+        change.isEmpty,
+        change.isConflict,
+        fileSignature(show?.fileStatuses ?? []),
+        show ? [...show.conflictedFiles].sort() : [],
+      ];
+    }),
+  ]);
+}
+
 function getLabel(prefix: string, change: Change) {
   return `${prefix} [${change.changeId}]${
     change.description ? ` • ${change.description}` : ""

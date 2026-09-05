@@ -22,7 +22,7 @@ import {
 } from "./services/JjWatchmanSnapshotTriggerRef";
 import type { RepoState } from "./services/RepoState";
 import { repoEventLoop } from "./eventLoop";
-import { computeRenderData, applyRenderData } from "./render";
+import { computeRenderData, applyRenderData, computeStateSignature } from "./render";
 import {
   resolveRepoPath,
   discoverRepositoriesEffect,
@@ -74,49 +74,83 @@ export interface RepoLifecycle {
 export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
   const workspaceStateLoadTokens = new WeakMap<RepoHandle, number>();
 
+  interface RenderCache {
+    states: Map<string, { operationId: string | undefined; state: RepoState }>;
+    lastRenderKey: string | undefined;
+  }
+  const renderCacheByRepo = new WeakMap<RepoHandle, RenderCache>();
+  const getRenderCache = (repo: RepoHandle): RenderCache => {
+    let cache = renderCacheByRepo.get(repo);
+    if (!cache) {
+      cache = { states: new Map(), lastRenderKey: undefined };
+      renderCacheByRepo.set(repo, cache);
+    }
+    return cache;
+  };
+
   const applyWorkspaceState = async (
     repo: RepoHandle,
     workspace: { name: string; root: string },
   ) => {
     const token = (workspaceStateLoadTokens.get(repo) ?? 0) + 1;
     workspaceStateLoadTokens.set(repo, token);
+    const renderCache = getRenderCache(repo);
     try {
-      const wsState = await repo.runPromise(
-        Effect.gen(function* () {
-          const wsConfig = { ...repo.config, repositoryRoot: workspace.root };
-          const status = yield* getStatus(wsConfig, {
-            cwd: workspace.root,
-            ignoreWorkingCopy: false,
-          });
-          const stackIds = (
-            yield* getWorkspaceStack(repo.config, workspace.name)
-          ).filter(
-            (id) =>
-              status.workingCopy.changeId === "" ||
-              !id.startsWith(status.workingCopy.changeId),
-          );
-          const shows =
-            stackIds.length > 0 ? yield* getShowAll(wsConfig, stackIds) : [];
-          const fileList = yield* getFileList(wsConfig, {
-            cwd: workspace.root,
-          });
-          return computeNewState(
-            emptyRepoState,
-            repo.mainState.operationId ?? "",
-            { ...status, parentChanges: shows.map((show) => show.change) },
-            fileList,
-            shows.map((show) => ({ changeId: show.change.changeId, show })),
-            workspace.root,
-          );
-        }),
-      );
+      let wsState: RepoState;
+      const cached = renderCache.states.get(workspace.name);
       if (
-        workspaceStateLoadTokens.get(repo) !== token ||
-        repo.activeWorkspace?.name !== workspace.name
+        cached &&
+        cached.operationId !== undefined &&
+        cached.operationId === repo.mainState.operationId
       ) {
-        return;
+        wsState = cached.state;
+      } else {
+        wsState = await repo.runPromise(
+          Effect.gen(function* () {
+            const wsConfig = { ...repo.config, repositoryRoot: workspace.root };
+            const status = yield* getStatus(wsConfig, {
+              cwd: workspace.root,
+              ignoreWorkingCopy: false,
+            });
+            const stackIds = (
+              yield* getWorkspaceStack(repo.config, workspace.name)
+            ).filter(
+              (id) =>
+                status.workingCopy.changeId === "" ||
+                !id.startsWith(status.workingCopy.changeId),
+            );
+            const shows =
+              stackIds.length > 0 ? yield* getShowAll(wsConfig, stackIds) : [];
+            const fileList = yield* getFileList(wsConfig, {
+              cwd: workspace.root,
+            });
+            return computeNewState(
+              emptyRepoState,
+              repo.mainState.operationId ?? "",
+              { ...status, parentChanges: shows.map((show) => show.change) },
+              fileList,
+              shows.map((show) => ({ changeId: show.change.changeId, show })),
+              workspace.root,
+            );
+          }),
+        );
+        if (
+          workspaceStateLoadTokens.get(repo) !== token ||
+          repo.activeWorkspace?.name !== workspace.name
+        ) {
+          return;
+        }
+        renderCache.states.set(workspace.name, {
+          operationId: wsState.operationId,
+          state: wsState,
+        });
       }
       repo.currentState = wsState;
+      markWorkspaceStale(repo, workspace.name, false);
+      const renderKey = `ws:${workspace.name}:${computeStateSignature(wsState)}`;
+      if (renderCache.lastRenderKey === renderKey) {
+        return;
+      }
       const renderData = computeRenderData(wsState);
       if (renderData) {
         repo.parentGroups = applyRenderData(
@@ -141,7 +175,7 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
         repositoryRoot: repo.config.repositoryRoot,
       });
       repo.onDidUpdateEmitter.fire();
-      markWorkspaceStale(repo, workspace.name, false);
+      renderCache.lastRenderKey = renderKey;
     } catch (e) {
       if (
         e instanceof Error &&
@@ -175,30 +209,35 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
 
   const applyRepoStateUpdate = (repo: RepoHandle, newState: RepoState) => {
     repo.mainState = newState;
+    const renderCache = getRenderCache(repo);
     if (repo.activeWorkspace) {
       void applyWorkspaceState(repo, repo.activeWorkspace);
     } else {
       repo.currentState = newState;
-      const renderData = computeRenderData(newState);
-      if (renderData) {
-        repo.parentGroups = applyRenderData(
-          renderData,
-          repo.sourceControl,
-          repo.workingCopyGroup,
-          repo.parentGroups,
-        );
-      }
+      const renderKey = `main:${computeStateSignature(newState)}`;
+      if (renderCache.lastRenderKey !== renderKey) {
+        const renderData = computeRenderData(newState);
+        if (renderData) {
+          repo.parentGroups = applyRenderData(
+            renderData,
+            repo.sourceControl,
+            repo.workingCopyGroup,
+            repo.parentGroups,
+          );
+        }
 
-      deps.decorationProvider.onRefresh(
-        repo.config.repositoryRoot,
-        newState.fileStatusesByChange,
-        newState.trackedFiles,
-        newState.conflictedFilesByChange,
-      );
-      deps.fileSystemProvider.onDidChangeRepository({
-        repositoryRoot: repo.config.repositoryRoot,
-      });
-      repo.onDidUpdateEmitter.fire();
+        deps.decorationProvider.onRefresh(
+          repo.config.repositoryRoot,
+          newState.fileStatusesByChange,
+          newState.trackedFiles,
+          newState.conflictedFilesByChange,
+        );
+        deps.fileSystemProvider.onDidChangeRepository({
+          repositoryRoot: repo.config.repositoryRoot,
+        });
+        repo.onDidUpdateEmitter.fire();
+        renderCache.lastRenderKey = renderKey;
+      }
     }
 
     const operationLogManager = deps.getOperationLogManager();
