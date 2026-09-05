@@ -40,6 +40,11 @@ export interface InitCommandHandlers {
   readonly selectGraphWebviewRepo: () => unknown;
   readonly refreshOperationLog: () => unknown;
   readonly selectOperationLogRepo: () => unknown;
+  readonly refreshWorkspaces: () => unknown;
+  readonly selectWorkspacesRepo: () => unknown;
+  readonly workspaceNew: (item: unknown) => unknown;
+  readonly workspaceUpdateStale: (item: unknown) => unknown;
+  readonly workspaceShow: (item: unknown) => unknown;
   readonly operationUndo: (item: unknown) => unknown;
   readonly operationRestore: (item: unknown) => unknown;
   readonly gitFetch: () => unknown;
@@ -161,6 +166,30 @@ export async function registerInitCommands(
       "jj.selectOperationLogRepo",
       handlers.selectOperationLogRepo,
     ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.refreshWorkspaces",
+      handlers.refreshWorkspaces,
+    ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.selectWorkspacesRepo",
+      handlers.selectWorkspacesRepo,
+    ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand("jj.workspaceNew", handlers.workspaceNew),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.workspaceUpdateStale",
+      handlers.workspaceUpdateStale,
+    ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand("jj.workspaceShow", handlers.workspaceShow),
   );
   await registerScoped(() =>
     vscode.commands.registerCommand("jj.operationUndo", handlers.operationUndo),

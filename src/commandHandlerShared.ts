@@ -8,11 +8,13 @@ import { showQuickPick } from "./services/Vscode";
 import type { RepoHandle } from "./repoHandle";
 import type { JJGraphWebview } from "./graphWebview";
 import type { OperationLogManager } from "./operationLogTreeView";
+import type { WorkspacesManager } from "./workspacesTreeView";
 import type { SelectedRepositoryController } from "./selectedRepository";
 import type { RepoLocator } from "./repoLocator";
 import type { RepoState } from "./services/RepoState";
 import { JJImmutableError } from "./types";
 import type { JJCliError } from "./types";
+import { pathEquals } from "./utils";
 
 export type RepoEffectEnv =
   | JJCli
@@ -59,6 +61,7 @@ export interface CommandHandlerDeps {
   >;
   readonly getGraphWebview: () => JJGraphWebview | undefined;
   readonly getOperationLogManager: () => OperationLogManager | undefined;
+  readonly getWorkspacesManager: () => WorkspacesManager | undefined;
   readonly getLastOpenedFileUri: () => vscode.Uri | undefined;
   readonly markGitFetchStarted: () => void;
   readonly refreshGitFetchStatus: () => Effect.Effect<void, Error, Vscode>;
@@ -87,6 +90,25 @@ export const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause));
 
 export const readRepoState = (repo: RepoHandle): RepoState => repo.currentState;
+
+export const getActiveWorkspaceRoot = (
+  deps: CommandHandlerDeps,
+  repo: RepoHandle,
+): string | undefined => {
+  const workspacesManager = deps.getWorkspacesManager();
+  if (!workspacesManager) {
+    return undefined;
+  }
+  if (
+    !pathEquals(
+      workspacesManager.getSelectedRepo().config.repositoryRoot,
+      repo.config.repositoryRoot,
+    )
+  ) {
+    return undefined;
+  }
+  return workspacesManager.getActiveWorkspace()?.root;
+};
 
 export const selectRepositoryEffect = (
   deps: CommandHandlerDeps,

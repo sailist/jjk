@@ -7,7 +7,14 @@ import {
   RepoStateRef,
   emptyRepoState,
   checkForUpdates,
+  computeNewState,
 } from "./services/RepoState";
+import {
+  getFileList,
+  getShowAll,
+  getStatus,
+  getWorkspaceStack,
+} from "./services/Repository";
 import {
   JjWatchmanRegisterSnapshotTriggerRef,
   watchmanRegisterSnapshotTriggerInitialRefresh,
@@ -22,6 +29,7 @@ import {
   provideOriginalResource,
 } from "./jjUtils";
 import { logger } from "./logger";
+import { pathEquals } from "./utils";
 import type { RepoHandle } from "./repoHandle";
 import type { JJDecorationProvider } from "./decorationProvider";
 import type { JJFileSystemProviderNew } from "./fileSystemProviderNew";
@@ -31,6 +39,7 @@ import type { ExtensionResources } from "./services/ExtensionResources";
 import { closeScope, scopedDisposable } from "./effectUtils";
 import type { JJGraphWebview } from "./graphWebview";
 import type { OperationLogManager } from "./operationLogTreeView";
+import type { WorkspacesManager } from "./workspacesTreeView";
 
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause));
@@ -47,6 +56,7 @@ export interface RepoLifecycleDeps {
   readonly fileSystemProvider: JJFileSystemProviderNew;
   readonly getGraphWebview: () => JJGraphWebview | undefined;
   readonly getOperationLogManager: () => OperationLogManager | undefined;
+  readonly getWorkspacesManager: () => WorkspacesManager | undefined;
   readonly reconcileSelectedRepo: () => Promise<void>;
 }
 
@@ -58,31 +68,138 @@ export interface RepoLifecycle {
     Vscode
   >;
   readonly poll: () => Effect.Effect<void, never, Vscode>;
+  readonly refreshDisplayedState: (repo: RepoHandle) => void;
 }
 
 export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
-  const applyRepoStateUpdate = (repo: RepoHandle, newState: RepoState) => {
-    repo.currentState = newState;
-    const renderData = computeRenderData(newState);
-    if (renderData) {
-      repo.parentGroups = applyRenderData(
-        renderData,
-        repo.sourceControl,
-        repo.workingCopyGroup,
-        repo.parentGroups,
+  const workspaceStateLoadTokens = new WeakMap<RepoHandle, number>();
+
+  const applyWorkspaceState = async (
+    repo: RepoHandle,
+    workspace: { name: string; root: string },
+  ) => {
+    const token = (workspaceStateLoadTokens.get(repo) ?? 0) + 1;
+    workspaceStateLoadTokens.set(repo, token);
+    try {
+      const wsState = await repo.runPromise(
+        Effect.gen(function* () {
+          const wsConfig = { ...repo.config, repositoryRoot: workspace.root };
+          const status = yield* getStatus(wsConfig, {
+            cwd: workspace.root,
+            ignoreWorkingCopy: false,
+          });
+          const stackIds = (
+            yield* getWorkspaceStack(repo.config, workspace.name)
+          ).filter(
+            (id) =>
+              status.workingCopy.changeId === "" ||
+              !id.startsWith(status.workingCopy.changeId),
+          );
+          const shows =
+            stackIds.length > 0 ? yield* getShowAll(wsConfig, stackIds) : [];
+          const fileList = yield* getFileList(wsConfig, {
+            cwd: workspace.root,
+          });
+          return computeNewState(
+            emptyRepoState,
+            repo.mainState.operationId ?? "",
+            { ...status, parentChanges: shows.map((show) => show.change) },
+            fileList,
+            shows.map((show) => ({ changeId: show.change.changeId, show })),
+            workspace.root,
+          );
+        }),
+      );
+      if (
+        workspaceStateLoadTokens.get(repo) !== token ||
+        repo.activeWorkspace?.name !== workspace.name
+      ) {
+        return;
+      }
+      repo.currentState = wsState;
+      const renderData = computeRenderData(wsState);
+      if (renderData) {
+        repo.parentGroups = applyRenderData(
+          renderData,
+          repo.sourceControl,
+          repo.workingCopyGroup,
+          repo.parentGroups,
+          {
+            name: workspace.name,
+            root: workspace.root,
+            repositoryRoot: repo.config.repositoryRoot,
+          },
+        );
+      }
+      deps.decorationProvider.onRefresh(
+        repo.config.repositoryRoot,
+        wsState.fileStatusesByChange,
+        wsState.trackedFiles,
+        wsState.conflictedFilesByChange,
+      );
+      deps.fileSystemProvider.onDidChangeRepository({
+        repositoryRoot: repo.config.repositoryRoot,
+      });
+      repo.onDidUpdateEmitter.fire();
+      markWorkspaceStale(repo, workspace.name, false);
+    } catch (e) {
+      if (
+        e instanceof Error &&
+        e.message.toLowerCase().includes("stale") &&
+        repo.activeWorkspace?.name === workspace.name
+      ) {
+        markWorkspaceStale(repo, workspace.name, true);
+      }
+      logger.error(
+        `Failed to load workspace ${workspace.name} state: ${String(e)}`,
       );
     }
+  };
 
-    deps.decorationProvider.onRefresh(
-      repo.config.repositoryRoot,
-      newState.fileStatusesByChange,
-      newState.trackedFiles,
-      newState.conflictedFilesByChange,
-    );
-    deps.fileSystemProvider.onDidChangeRepository({
-      repositoryRoot: repo.config.repositoryRoot,
-    });
-    repo.onDidUpdateEmitter.fire();
+  const markWorkspaceStale = (
+    repo: RepoHandle,
+    name: string,
+    stale: boolean,
+  ) => {
+    const workspacesManager = deps.getWorkspacesManager();
+    if (
+      workspacesManager &&
+      pathEquals(
+        workspacesManager.getSelectedRepo().config.repositoryRoot,
+        repo.config.repositoryRoot,
+      )
+    ) {
+      workspacesManager.setWorkspaceStale(name, stale);
+    }
+  };
+
+  const applyRepoStateUpdate = (repo: RepoHandle, newState: RepoState) => {
+    repo.mainState = newState;
+    if (repo.activeWorkspace) {
+      void applyWorkspaceState(repo, repo.activeWorkspace);
+    } else {
+      repo.currentState = newState;
+      const renderData = computeRenderData(newState);
+      if (renderData) {
+        repo.parentGroups = applyRenderData(
+          renderData,
+          repo.sourceControl,
+          repo.workingCopyGroup,
+          repo.parentGroups,
+        );
+      }
+
+      deps.decorationProvider.onRefresh(
+        repo.config.repositoryRoot,
+        newState.fileStatusesByChange,
+        newState.trackedFiles,
+        newState.conflictedFilesByChange,
+      );
+      deps.fileSystemProvider.onDidChangeRepository({
+        repositoryRoot: repo.config.repositoryRoot,
+      });
+      repo.onDidUpdateEmitter.fire();
+    }
 
     const operationLogManager = deps.getOperationLogManager();
     if (
@@ -91,6 +208,15 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
         repo.config.repositoryRoot
     ) {
       void operationLogManager.refresh();
+    }
+
+    const workspacesManager = deps.getWorkspacesManager();
+    if (
+      workspacesManager &&
+      workspacesManager.getSelectedRepo().config.repositoryRoot ===
+        repo.config.repositoryRoot
+    ) {
+      void workspacesManager.refresh();
     }
 
     const graphWebview = deps.getGraphWebview();
@@ -201,6 +327,8 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
               effect.pipe(Effect.provide(repoLayer)),
             ),
           currentState: emptyRepoState,
+          mainState: emptyRepoState,
+          activeWorkspace: undefined,
           sourceControl,
           workingCopyGroup,
           parentGroups: [],
@@ -344,5 +472,8 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
           ),
         { discard: true },
       ),
+    refreshDisplayedState: (repo) => {
+      applyRepoStateUpdate(repo, repo.mainState);
+    },
   };
 };

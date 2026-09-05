@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { InitCommandHandlers } from "./commands";
 import type { CommandHandlerDeps } from "./commandHandlerShared";
-import { readRepoState } from "./commandHandlerShared";
+import { readRepoState, getActiveWorkspaceRoot } from "./commandHandlerShared";
 import { showInputBox, showQuickPick } from "./services/Vscode";
 import {
   getShow,
@@ -64,7 +64,9 @@ export const createChangeActionInitHandlers = (
     const message = sourceControl.inputBox.value.trim() || undefined;
     return deps.runRepoCommand(
       repo,
-      jjNew(repo.config, message).pipe(
+      jjNew(repo.config, message, undefined, {
+        cwd: getActiveWorkspaceRoot(deps, repo),
+      }).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
             sourceControl.inputBox.value = "";
@@ -81,6 +83,7 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
@@ -124,9 +127,9 @@ export const createChangeActionInitHandlers = (
           ]);
 
           yield* deps.retryImmutable(
-            jjRestore(repo.config, resourceGroup.id, paths),
+            jjRestore(repo.config, resourceGroup.id, paths, false, { cwd }),
             `${resourceGroup.id} is immutable, are you sure?`,
-            jjRestore(repo.config, resourceGroup.id, paths, true),
+            jjRestore(repo.config, resourceGroup.id, paths, true, { cwd }),
           );
         }),
       ),
@@ -140,6 +143,7 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
@@ -186,6 +190,7 @@ export const createChangeActionInitHandlers = (
               filepaths: resourceStates.map(
                 (resourceState) => resourceState.resourceUri.fsPath,
               ),
+              cwd,
             }),
             `${destinationParentChange.changeId} is immutable, are you sure?`,
             jjSquash(repo.config, {
@@ -196,6 +201,7 @@ export const createChangeActionInitHandlers = (
                 (resourceState) => resourceState.resourceUri.fsPath,
               ),
               ignoreImmutable: true,
+              cwd,
             }),
           );
         }),
@@ -210,6 +216,7 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
@@ -245,6 +252,7 @@ export const createChangeActionInitHandlers = (
               filepaths: resourceStates.map(
                 (resourceState) => resourceState.resourceUri.fsPath,
               ),
+              cwd,
             }),
             `${resourceGroup.id} is immutable, are you sure?`,
             jjSquash(repo.config, {
@@ -255,6 +263,7 @@ export const createChangeActionInitHandlers = (
                 (resourceState) => resourceState.resourceUri.fsPath,
               ),
               ignoreImmutable: true,
+              cwd,
             }),
           );
         }),
@@ -267,11 +276,17 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
       Effect.gen(function* () {
-        const showResult = yield* getShow(repo.config, resourceGroup.id);
+        const rev =
+          cwd !== undefined && resourceGroup.id === "@"
+            ? (readRepoState(repo).status?.workingCopy.changeId ??
+              resourceGroup.id)
+            : resourceGroup.id;
+        const showResult = yield* getShow(repo.config, rev);
         const message = yield* showInputBox({
           prompt: "Provide a description",
           placeHolder: "Change description here...",
@@ -282,9 +297,9 @@ export const createChangeActionInitHandlers = (
         }
 
         yield* deps.retryImmutable(
-          jjDescribe(repo.config, resourceGroup.id, message),
-          `${resourceGroup.id} is immutable, are you sure?`,
-          jjDescribe(repo.config, resourceGroup.id, message, true),
+          jjDescribe(repo.config, rev, message),
+          `${rev} is immutable, are you sure?`,
+          jjDescribe(repo.config, rev, message, true),
         );
       }),
       "Failed to update description",
@@ -295,6 +310,7 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
@@ -337,6 +353,7 @@ export const createChangeActionInitHandlers = (
               fromRev: "@",
               toRev: destinationParentChange.changeId,
               message: promptResult.message,
+              cwd,
             }),
             `${destinationParentChange.changeId} is immutable, are you sure?`,
             jjSquash(repo.config, {
@@ -344,6 +361,7 @@ export const createChangeActionInitHandlers = (
               toRev: destinationParentChange.changeId,
               message: promptResult.message,
               ignoreImmutable: true,
+              cwd,
             }),
           );
         }),
@@ -356,6 +374,7 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
@@ -387,6 +406,7 @@ export const createChangeActionInitHandlers = (
               fromRev: resourceGroup.id,
               toRev: "@",
               message: promptResult.message,
+              cwd,
             }),
             `${resourceGroup.id} is immutable, are you sure?`,
             jjSquash(repo.config, {
@@ -394,6 +414,7 @@ export const createChangeActionInitHandlers = (
               toRev: "@",
               message: promptResult.message,
               ignoreImmutable: true,
+              cwd,
             }),
           );
         }),
@@ -406,14 +427,15 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
       deps.withSourceControlProgress(
         deps.retryImmutable(
-          jjRestore(repo.config, resourceGroup.id, undefined),
+          jjRestore(repo.config, resourceGroup.id, undefined, false, { cwd }),
           `${resourceGroup.id} is immutable, are you sure?`,
-          jjRestore(repo.config, resourceGroup.id, undefined, true),
+          jjRestore(repo.config, resourceGroup.id, undefined, true, { cwd }),
         ),
       ),
       "Failed to restore",
@@ -424,13 +446,14 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
       deps.retryImmutable(
-        jjEdit(repo.config, resourceGroup.id),
+        jjEdit(repo.config, resourceGroup.id, false, { cwd }),
         `${resourceGroup.id} is immutable, are you sure?`,
-        jjEdit(repo.config, resourceGroup.id, true),
+        jjEdit(repo.config, resourceGroup.id, true, { cwd }),
       ),
       "Failed to switch to change",
     );

@@ -11,7 +11,9 @@ import {
   parseShowResult,
   parseRenamePaths,
   parseOperationLog,
+  parseWorkspaceList,
   operationRecordTemplate,
+  workspaceRecordTemplate,
   SHOW_FILE_FIELD_SEPARATOR,
   SHOW_FILE_SEPARATOR,
   showPaginatedRecordTemplate,
@@ -24,6 +26,7 @@ import {
   RepositoryStatus,
   Show,
   Operation,
+  WorkspaceInfo,
   JJCliError,
   JJImmutableError,
   RepositoryDataError,
@@ -63,6 +66,7 @@ export const getLatestOperationId = (
 
 export const getStatus = (
   config: RepositoryConfig,
+  opts?: { cwd?: string; ignoreWorkingCopy?: boolean },
 ): Effect.Effect<
   RepositoryStatus,
   JJCliError | JJImmutableError,
@@ -72,19 +76,181 @@ export const getStatus = (
     const cli = yield* JJCli;
     const output = yield* cli.run(["status", "--color=always"], {
       timeout: 5000,
-      ignoreWorkingCopy: true,
+      ignoreWorkingCopy: opts?.ignoreWorkingCopy ?? true,
+      ...(opts?.cwd ? { cwd: opts.cwd } : {}),
     });
     return yield* Effect.sync(() => parseStatus(config.repositoryRoot, output));
   });
 
+export const getWorkspaceList = (
+  _config: RepositoryConfig,
+): Effect.Effect<WorkspaceInfo[], JJCliError | JJImmutableError, RepositoryEnv> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    const rt = workspaceRecordTemplate;
+    const output = yield* cli.run(["workspace", "list", "-T", rt.template], {
+      timeout: 5000,
+      ignoreWorkingCopy: true,
+    });
+    return parseWorkspaceList(output, rt);
+  });
+
+export const getWorkspaceStack = (
+  _config: RepositoryConfig,
+  workspaceName: string,
+): Effect.Effect<string[], JJCliError | JJImmutableError, RepositoryEnv> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    const wsRef = `${workspaceName}@`;
+    const timestampTemplate =
+      'change_id ++ " " ++ self.committer().timestamp().format("%s%.3f") ++ "\\n"';
+    const candidatesOutput = yield* cli.run(
+      [
+        "log",
+        "--no-graph",
+        "-r",
+        `::(${wsRef}) ~ ::trunk()`,
+        "-T",
+        timestampTemplate,
+      ],
+      { timeout: 5000, ignoreWorkingCopy: true },
+    );
+    const othersOutput = yield* cli.run(
+      [
+        "log",
+        "--no-graph",
+        "-r",
+        `::(working_copies() ~ (${wsRef}))`,
+        "-T",
+        'change_id ++ "\\n"',
+      ],
+      { timeout: 5000, ignoreWorkingCopy: true },
+    );
+    const otherChangeIds = new Set(
+      othersOutput
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line !== ""),
+    );
+    const candidates: { changeId: string; timestamp: number }[] = [];
+    const candidateIndexById = new Map<string, number>();
+    for (const line of candidatesOutput.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed === "") {
+        continue;
+      }
+      const [changeId, timestampRaw] = trimmed.split(" ");
+      const timestamp = Number(timestampRaw);
+      const existingIndex = candidateIndexById.get(changeId);
+      if (existingIndex === undefined) {
+        candidateIndexById.set(changeId, candidates.length);
+        candidates.push({ changeId, timestamp });
+      } else if (timestamp > candidates[existingIndex].timestamp) {
+        candidates[existingIndex].timestamp = timestamp;
+      }
+    }
+    const shared = candidates.filter((candidate) =>
+      otherChangeIds.has(candidate.changeId),
+    );
+    if (shared.length === 0) {
+      return candidates.map((candidate) => candidate.changeId);
+    }
+    const workspaces = yield* getWorkspaceList(_config);
+    const sharedRevset = shared
+      .map((candidate) => candidate.changeId)
+      .join(" | ");
+    const ownership = new Map<
+      string,
+      { own: number; otherMax: number; otherMinName: string }
+    >(
+      shared.map((candidate) => [
+        candidate.changeId,
+        {
+          own: candidate.timestamp,
+          otherMax: Number.NEGATIVE_INFINITY,
+          otherMinName: "",
+        },
+      ]),
+    );
+    const otherOutputs = yield* Effect.all(
+      workspaces
+        .filter((workspace) => workspace.name !== workspaceName)
+        .map((workspace) =>
+          cli
+            .run(
+              [
+                "log",
+                "--no-graph",
+                "-r",
+                `(::(${workspace.name}@)) & (${sharedRevset})`,
+                "-T",
+                timestampTemplate,
+              ],
+              { timeout: 5000, ignoreWorkingCopy: true },
+            )
+            .pipe(
+              Effect.map((output) => ({
+                otherName: workspace.name,
+                output,
+              })),
+            ),
+        ),
+      { concurrency: "unbounded" },
+    );
+    for (const { otherName, output } of otherOutputs) {
+      const latestById = new Map<string, number>();
+      for (const line of output.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed === "") {
+          continue;
+        }
+        const [changeId, timestampRaw] = trimmed.split(" ");
+        const timestamp = Number(timestampRaw);
+        const latest = latestById.get(changeId);
+        if (latest === undefined || timestamp > latest) {
+          latestById.set(changeId, timestamp);
+        }
+      }
+      for (const [changeId, timestamp] of latestById) {
+        const info = ownership.get(changeId);
+        if (!info) {
+          continue;
+        }
+        if (timestamp > info.otherMax) {
+          info.otherMax = timestamp;
+          info.otherMinName = otherName;
+        } else if (timestamp === info.otherMax && otherName < info.otherMinName) {
+          info.otherMinName = otherName;
+        }
+      }
+    }
+    return candidates
+      .filter((candidate) => {
+        const info = ownership.get(candidate.changeId);
+        if (!info) {
+          return true;
+        }
+        if (info.own > info.otherMax) {
+          return true;
+        }
+        if (info.own < info.otherMax) {
+          return false;
+        }
+        return info.otherMinName === "" || workspaceName < info.otherMinName;
+      })
+      .map((candidate) => candidate.changeId);
+  });
+
 export const getFileList = (
   _config: RepositoryConfig,
+  opts?: { cwd?: string },
 ): Effect.Effect<string[], JJCliError | JJImmutableError, RepositoryEnv> =>
   Effect.gen(function* () {
     const cli = yield* JJCli;
     const output = yield* cli.run(["file", "list"], {
       timeout: 5000,
       ignoreWorkingCopy: true,
+      ...(opts?.cwd ? { cwd: opts.cwd } : {}),
     });
     return output.trim().split("\n");
   });
@@ -166,6 +332,7 @@ export const jjNew = (
   _config: RepositoryConfig,
   message?: string,
   revs?: string[],
+  opts?: { cwd?: string },
 ): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
   Effect.gen(function* () {
     const cli = yield* JJCli;
@@ -175,7 +342,7 @@ export const jjNew = (
         ...(message ? ["-m", message] : []),
         ...(revs ? ["-r", ...revs] : []),
       ],
-      { timeout: 5000 },
+      { timeout: 5000, ...(opts?.cwd ? { cwd: opts.cwd } : {}) },
     );
     return output;
   });
@@ -208,6 +375,7 @@ export const jjSquash = (
     message?: string;
     filepaths?: string[];
     ignoreImmutable?: boolean;
+    cwd?: string;
   },
 ): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
   Effect.gen(function* () {
@@ -225,7 +393,7 @@ export const jjSquash = (
           : []),
         ...(opts.ignoreImmutable ? ["--ignore-immutable"] : []),
       ],
-      { timeout: 5000 },
+      { timeout: 5000, ...(opts.cwd ? { cwd: opts.cwd } : {}) },
     );
   });
 
@@ -233,14 +401,60 @@ export const jjEdit = (
   _config: RepositoryConfig,
   rev: string,
   ignoreImmutable = false,
+  opts?: { cwd?: string },
 ): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
   Effect.gen(function* () {
     const cli = yield* JJCli;
     const buffer = yield* cli.runBuffer(
       ["edit", "-r", rev, ...(ignoreImmutable ? ["--ignore-immutable"] : [])],
-      { timeout: 5000 },
+      { timeout: 5000, ...(opts?.cwd ? { cwd: opts.cwd } : {}) },
     );
     return buffer.toString();
+  });
+
+export const jjAbandon = (
+  _config: RepositoryConfig,
+  rev: string,
+  ignoreImmutable = false,
+): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    return yield* cli.run(
+      ["abandon", "-r", rev, ...(ignoreImmutable ? ["--ignore-immutable"] : [])],
+      { timeout: 5000 },
+    );
+  });
+
+export const jjCommit = (
+  _config: RepositoryConfig,
+  rev: string,
+  message?: string,
+  ignoreImmutable = false,
+): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    return yield* cli.run(
+      [
+        "commit",
+        "-r",
+        rev,
+        ...(message ? ["-m", message] : []),
+        ...(ignoreImmutable ? ["--ignore-immutable"] : []),
+      ],
+      { timeout: 5000 },
+    );
+  });
+
+export const jjWorkspaceUpdateStale = (
+  _config: RepositoryConfig,
+  cwd: string,
+): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    return yield* cli.run(["workspace", "update-stale"], {
+      timeout: 30000,
+      cwd,
+    });
   });
 
 export const jjRestore = (
@@ -248,6 +462,7 @@ export const jjRestore = (
   rev: string | undefined,
   filepaths: string[] | undefined,
   ignoreImmutable = false,
+  opts?: { cwd?: string },
 ): Effect.Effect<string, JJCliError | JJImmutableError, RepositoryEnv> =>
   Effect.gen(function* () {
     const cli = yield* JJCli;
@@ -261,7 +476,7 @@ export const jjRestore = (
           : []),
         ...(ignoreImmutable ? ["--ignore-immutable"] : []),
       ],
-      { timeout: 5000 },
+      { timeout: 5000, ...(opts?.cwd ? { cwd: opts.cwd } : {}) },
     );
     return buffer.toString();
   });

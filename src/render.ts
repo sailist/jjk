@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import path from "path";
-import { toJJUri } from "./uri";
+import { toJJUri, type JJUriParams } from "./uri";
 import type { Change, FileStatus } from "./types";
 import type { RepoState } from "./services/RepoState";
 
@@ -80,9 +80,30 @@ export function applyRenderData(
   sourceControl: vscode.SourceControl,
   workingCopyGroup: vscode.SourceControlResourceGroup,
   parentGroups: vscode.SourceControlResourceGroup[],
+  workspace?: { name: string; root: string; repositoryRoot: string },
 ): vscode.SourceControlResourceGroup[] {
+  const revParams = (rev: string, filePath: string): JJUriParams =>
+    workspace
+      ? {
+          rev,
+          repo: workspace.repositoryRoot,
+          path: path.relative(workspace.root, filePath),
+        }
+      : { rev };
+  const diffOriginalParams = (rev: string, filePath: string): JJUriParams =>
+    workspace
+      ? {
+          diffOriginalRev: rev,
+          repo: workspace.repositoryRoot,
+          path: path.relative(workspace.root, filePath),
+        }
+      : { diffOriginalRev: rev };
+
   // Update working copy
-  workingCopyGroup.label = getLabel("Working Copy", renderData.workingCopy);
+  workingCopyGroup.label = getLabel(
+    workspace ? `Working Copy (${workspace.name})` : "Working Copy",
+    renderData.workingCopy,
+  );
   workingCopyGroup.resourceStates = renderData.workingCopyFileStatuses.map(
     (fileStatus) => ({
       resourceUri: vscode.Uri.file(fileStatus.path),
@@ -92,11 +113,15 @@ export function applyRenderData(
       },
       command: getResourceStateCommand(
         fileStatus,
-        toJJUri(vscode.Uri.file(`${fileStatus.path}`), {
-          diffOriginalRev: "@",
-        }),
+        toJJUri(
+          vscode.Uri.file(`${fileStatus.path}`),
+          diffOriginalParams(
+            workspace ? renderData.workingCopy.changeId : "@",
+            fileStatus.path,
+          ),
+        ),
         vscode.Uri.file(fileStatus.path),
-        "(Working Copy)",
+        workspace ? `(${workspace.name}@)` : "(Working Copy)",
       ),
     }),
   );
@@ -138,21 +163,24 @@ export function applyRenderData(
 
     parentChangeResourceGroup.resourceStates = fileStatuses.map(
       (parentStatus) => ({
-        resourceUri: toJJUri(vscode.Uri.file(parentStatus.path), {
-          rev: parentChange.changeId,
-        }),
+        resourceUri: toJJUri(
+          vscode.Uri.file(parentStatus.path),
+          revParams(parentChange.changeId, parentStatus.path),
+        ),
         decorations: {
           strikeThrough: parentStatus.type === "D",
           tooltip: path.basename(parentStatus.file),
         },
         command: getResourceStateCommand(
           parentStatus,
-          toJJUri(vscode.Uri.file(parentStatus.path), {
-            diffOriginalRev: parentChange.changeId,
-          }),
-          toJJUri(vscode.Uri.file(parentStatus.path), {
-            rev: parentChange.changeId,
-          }),
+          toJJUri(
+            vscode.Uri.file(parentStatus.path),
+            diffOriginalParams(parentChange.changeId, parentStatus.path),
+          ),
+          toJJUri(
+            vscode.Uri.file(parentStatus.path),
+            revParams(parentChange.changeId, parentStatus.path),
+          ),
           `(${parentChange.changeId})`,
         ),
       }),

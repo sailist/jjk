@@ -4,7 +4,7 @@
   "publisher": "jjk",
   "description": "Jujutsu (jj) version control system for VS Code",
   "icon": "images/logo.png",
-  "version": "0.10.0",
+  "version": "0.12.0",
   "engines": {
     "vscode": "^1.96.0",
     "npm": ">=11.10.0"
@@ -33,6 +33,11 @@
         {
           "id": "jjOperationLog",
           "name": "Operation Log (JJ)",
+          "when": "jj.reposExist"
+        },
+        {
+          "id": "jjWorkspaces",
+          "name": "Workspaces (JJ)",
           "when": "jj.reposExist"
         }
       ]
@@ -145,6 +150,36 @@
         "title": "Select repository",
         "category": "Jujutsu",
         "icon": "$(repo)"
+      },
+      {
+        "command": "jj.refreshWorkspaces",
+        "title": "Refresh workspaces",
+        "category": "Jujutsu",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "jj.selectWorkspacesRepo",
+        "title": "Select repository",
+        "category": "Jujutsu",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "jj.workspaceNew",
+        "title": "Create new change in this workspace",
+        "category": "Jujutsu",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "jj.workspaceUpdateStale",
+        "title": "Update stale workspace",
+        "category": "Jujutsu",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "jj.workspaceShow",
+        "title": "Show workspace changes",
+        "category": "Jujutsu",
+        "icon": "$(eye)"
       },
       {
         "command": "jj.operationUndo",
@@ -263,6 +298,16 @@
           "command": "jj.selectGraphWebviewRepo",
           "when": "view == jjGraphWebview",
           "group": "navigation"
+        },
+        {
+          "command": "jj.refreshWorkspaces",
+          "when": "view == jjWorkspaces",
+          "group": "navigation"
+        },
+        {
+          "command": "jj.selectWorkspacesRepo",
+          "when": "view == jjWorkspaces",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -274,6 +319,16 @@
         {
           "command": "jj.operationRestore",
           "when": "view == jjOperationLog",
+          "group": "inline"
+        },
+        {
+          "command": "jj.workspaceNew",
+          "when": "view == jjWorkspaces && viewItem == jjWorkspace",
+          "group": "inline"
+        },
+        {
+          "command": "jj.workspaceUpdateStale",
+          "when": "view == jjWorkspaces && viewItem == jjWorkspace.stale",
           "group": "inline"
         }
       ],
@@ -418,6 +473,22 @@
           "when": "false"
         },
         {
+          "command": "jj.selectWorkspacesRepo",
+          "when": "false"
+        },
+        {
+          "command": "jj.workspaceNew",
+          "when": "false"
+        },
+        {
+          "command": "jj.workspaceUpdateStale",
+          "when": "false"
+        },
+        {
+          "command": "jj.workspaceShow",
+          "when": "false"
+        },
+        {
           "command": "jj.operationUndo",
           "when": "false"
         },
@@ -481,6 +552,27 @@
           "default": true,
           "description": "Whether the periodic poll command (jj operation log) should snapshot the working copy. When enabled, file changes are automatically detected; when disabled, modified files may not auto-update until the next manual jj command.",
           "scope": "resource"
+        },
+        "jjk.workspaceGroups": {
+          "type": "array",
+          "default": [],
+          "description": "Grouping rules for the Workspaces view. Each rule maps a glob pattern (matched against the workspace path relative to the repository root) to a group name. The first matching rule wins; workspaces that match no rule are grouped by the first segment of their relative path, and the repository root itself is grouped under \"Main\".",
+          "scope": "resource",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "pattern": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "pattern"
+            ]
+          }
         }
       }
     },

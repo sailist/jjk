@@ -22,6 +22,8 @@ export interface RepoHandle {
     >,
   ) => Promise<A>;
   currentState: RepoState;
+  mainState: RepoState;
+  activeWorkspace: { name: string; root: string } | undefined;
   sourceControl: vscode.SourceControl;
   workingCopyGroup: vscode.SourceControlResourceGroup;
   parentGroups: vscode.SourceControlResourceGroup[];

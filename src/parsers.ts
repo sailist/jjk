@@ -6,6 +6,7 @@ import type {
   Operation,
   RepositoryStatus,
   Show,
+  WorkspaceInfo,
 } from "./types";
 import {
   CommitT,
@@ -13,6 +14,7 @@ import {
   OperationT,
   concat,
   jjIf,
+  raw,
   str,
   stringify,
   template,
@@ -118,6 +120,18 @@ export const operationRecordTemplate = template({
   .field("start", operation.time().start())
   .field("user", operation.user())
   .field("snapshot", operation.snapshot())
+  .build();
+
+export const workspaceRecordTemplate = template({
+  fieldSeparator: "w@j@k",
+  recordSeparator: "kj@w\n",
+})
+  .field("name", raw("self.name()"))
+  .field("root", raw("self.root()"))
+  .field("targetChangeId", raw("self.target().change_id()"))
+  .field("empty", raw("self.target().empty()"))
+  .field("conflict", raw("self.target().conflict()"))
+  .field("divergent", raw("self.target().divergent()"))
   .build();
 
 // --- ANSI processing ---
@@ -539,6 +553,63 @@ export function parseOperationLog(
   return ret;
 }
 
+// --- Workspace list parsing ---
+
+export function parseWorkspaceList(
+  rawOutput: string,
+  rt: RecordTemplate,
+): WorkspaceInfo[] {
+  const ret: WorkspaceInfo[] = [];
+  const lines = rawOutput.split(rt.recordSeparator).slice(0, -1);
+  for (const line of lines) {
+    const results = line.split(rt.fieldSeparator);
+    if (results.length > rt.fields.length) {
+      throw new Error(
+        "Separator found in a field value. This is not supported.",
+      );
+    } else if (results.length < rt.fields.length) {
+      throw new Error("Missing fields in the output.");
+    }
+    const workspace: WorkspaceInfo = {
+      name: "",
+      root: "",
+      targetChangeId: "",
+      isEmpty: false,
+      isConflict: false,
+      isDivergent: false,
+    };
+
+    for (let i = 0; i < results.length; i++) {
+      const value = results[i].trim();
+      switch (rt.fields[i].name) {
+        case "name":
+          workspace.name = value;
+          break;
+        case "root":
+          workspace.root = value;
+          break;
+        case "targetChangeId":
+          workspace.targetChangeId = value;
+          break;
+        case "empty":
+          workspace.isEmpty = value === "true";
+          break;
+        case "conflict":
+          workspace.isConflict = value === "true";
+          break;
+        case "divergent":
+          workspace.isDivergent = value === "true";
+          break;
+        default:
+          throw new Error(`Unexpected workspace field: ${rt.fields[i].name}`);
+      }
+    }
+    ret.push(workspace);
+  }
+
+  return ret;
+}
+
 // --- Log parsing (for graph webview) ---
 
 export class ChangeNode {
@@ -571,7 +642,7 @@ export function parseLog(output: string): ChangeNode[] {
 
   for (let i = 0; i < lines.length; i += 2) {
     const oddLine = lines[i];
-    let evenLine = lines[i + 1] || "";
+    const evenLine = lines[i + 1] || "";
 
     let changeId = "";
     if (i % 2 === 0) {
@@ -583,10 +654,6 @@ export function parseLog(output: string): ChangeNode[] {
 
     const match = evenLine.match(/([a-zA-Z0-9(].*)/);
     const description = match ? match[1] : "";
-
-    if (description) {
-      evenLine = evenLine.replace(description, "");
-    }
 
     const emailMatch = oddLine.match(
       /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/,

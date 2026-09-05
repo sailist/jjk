@@ -1,9 +1,15 @@
 import { Uri } from "vscode";
 import { type } from "arktype";
 
-const RevUriParams = type({ rev: "string" });
+const RevUriParams = type({
+  rev: "string",
+  "repo?": "string",
+  "path?": "string",
+});
 const DiffOriginalRevUriParams = type({
   diffOriginalRev: "string",
+  "repo?": "string",
+  "path?": "string",
 });
 const JJUriParams = type(RevUriParams, "|", DiffOriginalRevUriParams);
 

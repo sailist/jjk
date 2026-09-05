@@ -50,6 +50,15 @@ export type Operation = {
   snapshot: boolean;
 };
 
+export type WorkspaceInfo = {
+  name: string;
+  root: string;
+  targetChangeId: string;
+  isEmpty: boolean;
+  isConflict: boolean;
+  isDivergent: boolean;
+};
+
 export class JJCliError extends Data.TaggedError("JJCliError")<{
   message: string;
 }> {}

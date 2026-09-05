@@ -36,6 +36,18 @@ interface CacheRow {
 const THREE_MINUTES = 1000 * 60 * 3;
 const FIVE_MINUTES = 1000 * 60 * 5;
 
+const matchesRepoParam = (uri: Uri, repositoryRoot: string): boolean => {
+  if (uri.scheme !== "jj") {
+    return false;
+  }
+  try {
+    const params = getParams(uri);
+    return params.repo !== undefined && pathEquals(params.repo, repositoryRoot);
+  } catch {
+    return false;
+  }
+};
+
 export class JJFileSystemProviderNew implements FileSystemProvider {
   private _onDidChangeFile = new EventEmitter<FileChangeEvent[]>();
   readonly onDidChangeFile: Event<FileChangeEvent[]> =
@@ -68,7 +80,7 @@ export class JJFileSystemProviderNew implements FileSystemProvider {
 
     for (const { uri } of this.cache.values()) {
       for (const root of this.changedRepositoryRoots) {
-        if (isDescendant(root, uri.fsPath)) {
+        if (isDescendant(root, uri.fsPath) || matchesRepoParam(uri, root)) {
           events.push({ type: FileChangeType.Changed, uri });
           break;
         }
@@ -126,11 +138,15 @@ export class JJFileSystemProviderNew implements FileSystemProvider {
     const params = getParams(uri);
     const repos = this.getRepos();
 
-    const repo = repos.find((r) => {
-      return !path
-        .relative(r.config.repositoryRoot, uri.fsPath)
-        .startsWith("..");
-    });
+    const repo =
+      (params.repo
+        ? repos.find((r) => pathEquals(r.config.repositoryRoot, params.repo!))
+        : undefined) ??
+      repos.find((r) => {
+        return !path
+          .relative(r.config.repositoryRoot, uri.fsPath)
+          .startsWith("..");
+      });
     if (!repo) {
       throw FileSystemError.FileNotFound();
     }
@@ -141,20 +157,24 @@ export class JJFileSystemProviderNew implements FileSystemProvider {
 
     const rev =
       "diffOriginalRev" in params ? params.diffOriginalRev : params.rev;
+    const filePath = params.path ?? uri.fsPath;
+    const diffOriginalFilePath = params.path
+      ? path.join(repo.config.repositoryRoot, params.path)
+      : uri.fsPath;
 
     const effect =
       "diffOriginalRev" in params
         ? // Try getDiffOriginal first (fakeeditor-based, handles renames correctly),
           // then fall back to readFile
-          getDiffOriginal(repo.config, rev, uri.fsPath).pipe(
+          getDiffOriginal(repo.config, rev, diffOriginalFilePath).pipe(
             Effect.flatMap((data) =>
               data
                 ? Effect.succeed(data)
-                : readFileEffect(repo.config, rev, uri.fsPath),
+                : readFileEffect(repo.config, rev, filePath),
             ),
-            Effect.catchAll(() => readFileEffect(repo.config, rev, uri.fsPath)),
+            Effect.catchAll(() => readFileEffect(repo.config, rev, filePath)),
           )
-        : readFileEffect(repo.config, rev, uri.fsPath);
+        : readFileEffect(repo.config, rev, filePath);
 
     try {
       return await repo.runPromise(effect);

@@ -3,8 +3,14 @@ import { Effect, Scope } from "effect";
 import { JJGraphWebview, parseJJLog } from "./graphWebview";
 import { OperationLogManager } from "./operationLogTreeView";
 import {
+  WorkspacesManager,
+  type WorkspaceGroupRule,
+} from "./workspacesTreeView";
+import {
   getOperationLog,
   getShow,
+  getWorkspaceList,
+  getWorkspaceStack,
   jjEdit,
   jjNew,
   log,
@@ -12,13 +18,14 @@ import {
 import type { RepoHandle } from "./repoHandle";
 import type { SelectedRepositoryController } from "./selectedRepository";
 import type { Vscode } from "./services/Vscode";
-import { getActiveTextEditor } from "./services/Vscode";
+import { getActiveTextEditor, getConfigurationValue } from "./services/Vscode";
 import { setupAnnotations } from "./annotations";
 import type { RepoEffectEnv, RepoCommandEffect } from "./commandHandlerShared";
 
 export interface ExtensionViews {
   readonly graphWebview: JJGraphWebview | undefined;
   readonly operationLogManager: OperationLogManager | undefined;
+  readonly workspacesManager: WorkspacesManager | undefined;
   readonly getLastOpenedFileUri: () => vscode.Uri | undefined;
   readonly markGitFetchStarted: () => void;
   readonly refreshGitFetchStatus: () => Effect.Effect<void, Error, Vscode>;
@@ -44,6 +51,7 @@ export interface InitializeExtensionViewsDeps {
     effect: RepoCommandEffect,
     errorLabel: string,
   ) => Promise<void>;
+  readonly refreshDisplayedState: (repo: RepoHandle) => void;
   readonly runRepoEffect: <A, E>(
     repo: RepoHandle,
     effect: Effect.Effect<A, E, RepoEffectEnv>,
@@ -215,6 +223,52 @@ export async function initializeExtensionViews(
     }),
   );
 
+  const workspacesManager = await deps.registerScoped(
+    () =>
+      new WorkspacesManager({
+        initialRepo: initialSelectedRepo,
+        loadWorkspaces: (repo) =>
+          repo.runPromise(
+            Effect.gen(function* () {
+              const workspaces = yield* getWorkspaceList(repo.config);
+              const groupRules =
+                (yield* getConfigurationValue<WorkspaceGroupRule[]>(
+                  "jjk",
+                  "workspaceGroups",
+                )) ?? [];
+              return { workspaces, groupRules };
+            }),
+          ),
+        refreshDisplayedState: deps.refreshDisplayedState,
+        checkWorkspaceEmpty: (repo, workspace): Promise<boolean> =>
+          repo.runPromise(
+            Effect.gen(function* () {
+              if (!workspace.isEmpty) {
+                return false;
+              }
+              const stackIds = yield* getWorkspaceStack(
+                repo.config,
+                workspace.name,
+              );
+              return (
+                stackIds.filter((id) => id !== workspace.targetChangeId)
+                  .length === 0
+              );
+            }),
+          ),
+      }),
+  );
+  await deps.registerScoped(() =>
+    deps.selectedRepoController.onDidChange((repo) => {
+      deps.dispatchExtensionEffect(
+        Effect.promise(
+          () => workspacesManager?.setSelectedRepo(repo) ?? Promise.resolve(),
+        ),
+        "Failed to update workspaces repository selection",
+      );
+    }),
+  );
+
   const statusBarItem = await deps.registerScoped(() =>
     vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100),
   );
@@ -261,6 +315,7 @@ export async function initializeExtensionViews(
   return {
     graphWebview,
     operationLogManager,
+    workspacesManager,
     getLastOpenedFileUri: () => lastOpenedFileUri,
     markGitFetchStarted: () => {
       statusBarItem.text = "$(sync~spin)";

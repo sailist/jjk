@@ -136,14 +136,12 @@ export async function activate(context: vscode.ExtensionContext) {
     fileSystemProvider,
     getGraphWebview: () => extensionViews?.graphWebview,
     getOperationLogManager: () => extensionViews?.operationLogManager,
+    getWorkspacesManager: () => extensionViews?.workspacesManager,
     reconcileSelectedRepo: () =>
       extensionRuntime.runPromise(selectedRepoController.reconcileSelection()),
   });
   await repoLifecycle.initializeDiscoveredRepos();
   const { syncReposWithWorkspaceFolders, poll } = repoLifecycle;
-
-  // --- Lazy init flag ---
-  let isInitialized = false;
 
   // --- Check for colocated repos ---
   const colocatedWarnings = await setupColocatedWarnings({
@@ -216,7 +214,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  if (repos.length > 0 && !isInitialized) {
+  if (repos.length > 0) {
     extensionViews = await initializeExtensionViews({
       extensionUri: context.extensionUri,
       repos: () => repos,
@@ -226,6 +224,7 @@ export async function activate(context: vscode.ExtensionContext) {
       runInExtensionScope,
       dispatchExtensionEffect,
       runRepoCommand,
+      refreshDisplayedState: repoLifecycle.refreshDisplayedState,
       runRepoEffect,
       retryImmutable,
       setGraphNodesSelectedContext: (count) =>
@@ -233,7 +232,6 @@ export async function activate(context: vscode.ExtensionContext) {
           setContext("jjGraphView.nodesSelected", count).pipe(Effect.asVoid),
         ),
     });
-    isInitialized = extensionViews !== undefined;
   }
 
   await registerGlobalCommands(
@@ -244,6 +242,7 @@ export async function activate(context: vscode.ExtensionContext) {
       selectedRepoController: selectedRepo,
       getGraphWebview: () => extensionViews?.graphWebview,
       getOperationLogManager: () => extensionViews?.operationLogManager,
+      getWorkspacesManager: () => extensionViews?.workspacesManager,
       getLastOpenedFileUri: () =>
         extensionViews?.getLastOpenedFileUri() ?? undefined,
       markGitFetchStarted: () => {
@@ -271,6 +270,7 @@ export async function activate(context: vscode.ExtensionContext) {
       selectedRepoController: selectedRepo,
       getGraphWebview: () => extensionViews?.graphWebview,
       getOperationLogManager: () => extensionViews?.operationLogManager,
+      getWorkspacesManager: () => extensionViews?.workspacesManager,
       getLastOpenedFileUri: () =>
         extensionViews?.getLastOpenedFileUri() ?? undefined,
       markGitFetchStarted: () => {

@@ -167,6 +167,48 @@ export function discoverRepositoriesEffect(): Effect.Effect<
 > {
   return Effect.gen(function* () {
     const repoInfos = new Map<string, DiscoveredRepoInfo>();
+    const seenStorePaths = new Map<string, string>();
+
+    const addRepo = (info: DiscoveredRepoInfo) => {
+      const repoUri = vscode.Uri.file(
+        info.repoRoot.replace(/^\\\\\?\\UNC\\/, "\\\\"),
+      ).toString();
+      let storePath: string;
+      try {
+        storePath = resolveRepoPath(info.repoRoot);
+      } catch {
+        storePath = repoUri;
+      }
+      const existingRoot = seenStorePaths.get(storePath);
+      if (existingRoot !== undefined && existingRoot.length <= info.repoRoot.length) {
+        return;
+      }
+      if (existingRoot !== undefined) {
+        repoInfos.delete(
+          vscode.Uri.file(existingRoot.replace(/^\\\\\?\\UNC\\/, "\\\\")).toString(),
+        );
+      }
+      seenStorePaths.set(storePath, info.repoRoot);
+      repoInfos.set(repoUri, info);
+    };
+
+    const probeDir = (
+      dir: string,
+      jjPath: DiscoveredRepoInfo["jjPath"],
+      jjVersion: string,
+    ): Effect.Effect<string, Error> =>
+      Effect.gen(function* () {
+        const repoRoot = (yield* handleCommand(
+          spawn(jjPath.filepath, ["--ignore-working-copy", "root"], {
+            cwd: dir,
+            timeout: 5000,
+          }),
+        ))
+          .toString()
+          .trim();
+        addRepo({ jjPath, jjVersion, repoRoot });
+        return repoRoot;
+      });
 
     const workspaceFolders = yield* getWorkspaceFolders();
     for (const workspaceFolder of workspaceFolders) {
@@ -183,25 +225,24 @@ export function discoverRepositoriesEffect(): Effect.Effect<
             );
           }
 
-          const repoRoot = (yield* handleCommand(
-            spawn(jjPath.filepath, ["--ignore-working-copy", "root"], {
-              cwd: workspaceFolder.uri.fsPath,
-              timeout: 5000,
-            }),
-          ))
-            .toString()
-            .trim();
+          const direct = yield* Effect.either(
+            probeDir(workspaceFolder.uri.fsPath, jjPath, jjVersion),
+          );
+          if (direct._tag === "Right") {
+            return;
+          }
 
-          const repoUri = vscode.Uri.file(
-            repoRoot.replace(/^\\\\\?\\UNC\\/, "\\\\"),
-          ).toString();
-
-          if (!repoInfos.has(repoUri)) {
-            repoInfos.set(repoUri, {
-              jjPath,
-              jjVersion,
-              repoRoot,
-            });
+          const subDirs = fsSync
+            .readdirSync(workspaceFolder.uri.fsPath, { withFileTypes: true })
+            .filter(
+              (entry) =>
+                entry.isDirectory() &&
+                !entry.name.startsWith(".") &&
+                entry.name !== "node_modules",
+            )
+            .map((entry) => path.join(workspaceFolder.uri.fsPath, entry.name));
+          for (const subDir of subDirs) {
+            yield* Effect.either(probeDir(subDir, jjPath, jjVersion));
           }
         }),
       );

@@ -25,6 +25,7 @@ export class JJCli extends Context.Tag("JJCli")<
         timeout?: number;
         ignoreWorkingCopy?: boolean;
         env?: Record<string, string>;
+        cwd?: string;
       },
     ) => Effect.Effect<string, JJCliError | JJImmutableError, Vscode>;
     readonly runBuffer: (
@@ -33,6 +34,7 @@ export class JJCli extends Context.Tag("JJCli")<
         timeout?: number;
         ignoreWorkingCopy?: boolean;
         env?: Record<string, string>;
+        cwd?: string;
       },
     ) => Effect.Effect<Buffer, JJCliError | JJImmutableError, Vscode>;
     readonly runStreaming: (
@@ -45,6 +47,7 @@ export class JJCli extends Context.Tag("JJCli")<
       opts?: {
         timeout?: number;
         env?: Record<string, string>;
+        cwd?: string;
       },
     ) => Effect.Effect<FakeeditorHandle, JJCliError | JJImmutableError, Vscode>;
   }
@@ -106,6 +109,7 @@ export function JJCliLive(
       timeout?: number;
       ignoreWorkingCopy?: boolean;
       env?: Record<string, string>;
+      cwd?: string;
     },
   ): Effect.Effect<ReturnType<typeof spawn>, never, Vscode> {
     return Effect.gen(function* () {
@@ -121,7 +125,7 @@ export function JJCliLive(
       );
 
       const spawnOptions: Parameters<typeof spawn>[2] = {
-        cwd: config.repositoryRoot,
+        cwd: opts?.cwd ?? config.repositoryRoot,
         timeout,
         ...(opts?.env ? { env: { ...process.env, ...opts.env } } : {}),
       };
