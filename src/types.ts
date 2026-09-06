@@ -16,6 +16,7 @@ export interface Change {
   description: string;
   isEmpty: boolean;
   isConflict: boolean;
+  isDivergent?: boolean;
 }
 
 export interface ChangeWithDetails extends Change {

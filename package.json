@@ -93,6 +93,12 @@
         "icon": "$(plus)"
       },
       {
+        "command": "jj.newChangeBeforeWorkingCopy",
+        "title": "Create empty parent commit",
+        "category": "Jujutsu",
+        "icon": "$(add)"
+      },
+      {
         "command": "jj.squashToParentResourceGroup",
         "title": "Move changes to parent",
         "category": "Jujutsu",
@@ -121,6 +127,12 @@
         "title": "Edit this change",
         "category": "Jujutsu",
         "icon": "$(sign-in)"
+      },
+      {
+        "command": "jj.abandonResourceGroup",
+        "title": "Abandon this change",
+        "category": "Jujutsu",
+        "icon": "$(trash)"
       },
       {
         "command": "jj.restoreResourceState",
@@ -182,6 +194,12 @@
         "icon": "$(eye)"
       },
       {
+        "command": "jj.workspaceSearch",
+        "title": "Search in this workspace",
+        "category": "Jujutsu",
+        "icon": "$(search)"
+      },
+      {
         "command": "jj.operationUndo",
         "title": "Undo operation",
         "category": "Jujutsu",
@@ -233,6 +251,12 @@
         "title": "Open child change",
         "category": "Jujutsu",
         "icon": "$(arrow-right)"
+      },
+      {
+        "command": "jj.openGraph",
+        "title": "JJ Graph",
+        "category": "JJ",
+        "icon": "$(graph)"
       }
     ],
     "menus": {
@@ -330,6 +354,11 @@
           "command": "jj.workspaceUpdateStale",
           "when": "view == jjWorkspaces && viewItem == jjWorkspace.stale",
           "group": "inline"
+        },
+        {
+          "command": "jj.workspaceSearch",
+          "when": "view == jjWorkspaces && viewItem =~ /^jjWorkspace/",
+          "group": "inline"
         }
       ],
       "scm/title": [
@@ -342,9 +371,19 @@
           "command": "jj.new",
           "when": "scmProvider == jj",
           "group": "navigation"
+        },
+        {
+          "command": "jj.openGraph",
+          "when": "jj.reposExist",
+          "group": "navigation"
         }
       ],
       "scm/resourceGroup/context": [
+        {
+          "command": "jj.newChangeBeforeWorkingCopy",
+          "when": "scmProvider == jj && scmResourceGroup == @",
+          "group": "inline"
+        },
         {
           "command": "jj.describe",
           "when": "scmProvider == jj",
@@ -367,6 +406,11 @@
         },
         {
           "command": "jj.editResourceGroup",
+          "when": "scmProvider == jj && scmResourceGroup != @",
+          "group": "inline"
+        },
+        {
+          "command": "jj.abandonResourceGroup",
           "when": "scmProvider == jj && scmResourceGroup != @",
           "group": "inline"
         }
@@ -416,6 +460,14 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "jj.newChangeBeforeWorkingCopy",
+          "when": "false"
+        },
+        {
+          "command": "jj.abandonResourceGroup",
+          "when": "false"
+        },
         {
           "command": "jj.openFileResourceState",
           "when": "false"
@@ -486,6 +538,10 @@
         },
         {
           "command": "jj.workspaceShow",
+          "when": "false"
+        },
+        {
+          "command": "jj.workspaceSearch",
           "when": "false"
         },
         {
@@ -573,6 +629,367 @@
               "pattern"
             ]
           }
+        },
+        "jjk.graph.commitDetailsView.autoCenter": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Automatically center the Commit Details View when it is opened"
+        },
+        "jjk.graph.commitDetailsView.fileView.fileTree.compactFolders": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Compact folders in the Commit Details View File Tree"
+        },
+        "jjk.graph.commitDetailsView.fileView.type": {
+          "type": "string",
+          "default": "File Tree",
+          "enum": [
+            "File Tree",
+            "File List"
+          ],
+          "description": "JJ Graph: The type of file view used in the Commit Details View"
+        },
+        "jjk.graph.commitDetailsView.location": {
+          "type": "string",
+          "default": "Inline",
+          "enum": [
+            "Inline",
+            "Docked to Bottom"
+          ],
+          "description": "JJ Graph: The location of the Commit Details View"
+        },
+        "jjk.graph.contextMenuActionsVisibility": {
+          "type": "object",
+          "default": {},
+          "description": "JJ Graph: Control the visibility of context menu actions"
+        },
+        "jjk.graph.customBranchGlobPatterns": {
+          "type": "array",
+          "default": [],
+          "description": "JJ Graph: Custom glob patterns for grouping bookmarks in the Branches dropdown"
+        },
+        "jjk.graph.customEmojiShortcodeMappings": {
+          "type": "array",
+          "default": [],
+          "description": "JJ Graph: Custom emoji shortcode mappings used when rendering descriptions"
+        },
+        "jjk.graph.date.format": {
+          "type": "string",
+          "default": "Date & Time",
+          "enum": [
+            "Date & Time",
+            "Date Only",
+            "ISO Date & Time",
+            "ISO Date Only",
+            "Relative"
+          ],
+          "description": "JJ Graph: The format of dates displayed in the graph"
+        },
+        "jjk.graph.date.type": {
+          "type": "string",
+          "default": "Author Date",
+          "enum": [
+            "Author Date",
+            "Commit Date"
+          ],
+          "description": "JJ Graph: The type of date displayed in the graph"
+        },
+        "jjk.graph.defaultColumnVisibility": {
+          "type": "object",
+          "default": {
+            "Date": true,
+            "Author": true,
+            "Commit": true
+          },
+          "description": "JJ Graph: The default visibility of the Date, Author and Commit columns"
+        },
+        "jjk.graph.dialog.addTag.pushToRemote": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Push to Remote option in the Add Tag dialog"
+        },
+        "jjk.graph.dialog.addTag.type": {
+          "type": "string",
+          "default": "Annotated",
+          "enum": [
+            "Annotated",
+            "Lightweight"
+          ],
+          "description": "JJ Graph: Default value of the Type option in the Add Tag dialog"
+        },
+        "jjk.graph.dialog.applyStash.reinstateIndex": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Reinstate Index option in the Apply Stash dialog"
+        },
+        "jjk.graph.dialog.cherryPick.noCommit": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the No Commit option in the Cherry Pick dialog"
+        },
+        "jjk.graph.dialog.cherryPick.recordOrigin": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Record Origin option in the Cherry Pick dialog"
+        },
+        "jjk.graph.dialog.createBranch.checkOut": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Check Out option in the Create Branch dialog"
+        },
+        "jjk.graph.dialog.deleteBranch.forceDelete": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Force Delete option in the Delete Branch dialog"
+        },
+        "jjk.graph.dialog.fetchIntoLocalBranch.forceFetch": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Force Fetch option in the Fetch into Local Branch dialog"
+        },
+        "jjk.graph.dialog.fetchRemote.prune": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Prune option in the Fetch Remote dialog"
+        },
+        "jjk.graph.dialog.fetchRemote.pruneTags": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Prune Tags option in the Fetch Remote dialog"
+        },
+        "jjk.graph.dialog.general.referenceInputSpaceSubstitution": {
+          "type": "string",
+          "default": "None",
+          "enum": [
+            "None",
+            "Hyphen",
+            "Underscore"
+          ],
+          "description": "JJ Graph: Substitute spaces in reference name inputs with the selected character"
+        },
+        "jjk.graph.dialog.merge.noCommit": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the No Commit option in the Merge dialog"
+        },
+        "jjk.graph.dialog.merge.noFastForward": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Default value of the No Fast Forward option in the Merge dialog"
+        },
+        "jjk.graph.dialog.merge.squashCommits": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Squash Commits option in the Merge dialog"
+        },
+        "jjk.graph.dialog.popStash.reinstateIndex": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Reinstate Index option in the Pop Stash dialog"
+        },
+        "jjk.graph.dialog.pullBranch.noFastForward": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the No Fast Forward option in the Pull Branch dialog"
+        },
+        "jjk.graph.dialog.pullBranch.squashCommits": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Squash Commits option in the Pull Branch dialog"
+        },
+        "jjk.graph.dialog.rebase.ignoreDate": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Default value of the Ignore Date option in the Rebase dialog"
+        },
+        "jjk.graph.dialog.rebase.launchInteractiveRebase": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Default value of the Launch Interactive Rebase option in the Rebase dialog"
+        },
+        "jjk.graph.dialog.resetCurrentBranchToCommit.mode": {
+          "type": "string",
+          "default": "Mixed",
+          "enum": [
+            "Soft",
+            "Mixed",
+            "Hard"
+          ],
+          "description": "JJ Graph: Default value of the Mode option in the Reset Current Branch to Commit dialog"
+        },
+        "jjk.graph.dialog.resetUncommittedChanges.mode": {
+          "type": "string",
+          "default": "Mixed",
+          "enum": [
+            "Mixed",
+            "Hard"
+          ],
+          "description": "JJ Graph: Default value of the Mode option in the Reset Uncommitted Changes dialog"
+        },
+        "jjk.graph.dialog.stashUncommittedChanges.includeUntracked": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Default value of the Include Untracked option in the Stash Uncommitted Changes dialog"
+        },
+        "jjk.graph.enhancedAccessibility": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Enable enhanced accessibility features"
+        },
+        "jjk.graph.graph.colours": {
+          "type": "array",
+          "default": [
+            "#0085d9",
+            "#d9008f",
+            "#00d90a",
+            "#d98500",
+            "#a300d9",
+            "#ff0000",
+            "#00d9cc",
+            "#e138e8",
+            "#85d900",
+            "#dc5b23",
+            "#6f24d6",
+            "#ffcc00"
+          ],
+          "description": "JJ Graph: The colours used to draw the graph"
+        },
+        "jjk.graph.graph.style": {
+          "type": "string",
+          "default": "rounded",
+          "enum": [
+            "rounded",
+            "angular"
+          ],
+          "description": "JJ Graph: The style of the graph lines"
+        },
+        "jjk.graph.graph.uncommittedChanges": {
+          "type": "string",
+          "default": "Open Circle at the Uncommitted Changes",
+          "enum": [
+            "Open Circle at the Uncommitted Changes",
+            "Open Circle at the Checked Out Commit"
+          ],
+          "description": "JJ Graph: The style of the uncommitted changes node"
+        },
+        "jjk.graph.keyboardShortcut.find": {
+          "type": "string",
+          "default": "CTRL/CMD + F",
+          "description": "JJ Graph: The keybinding for the Find widget (or UNASSIGNED)"
+        },
+        "jjk.graph.keyboardShortcut.refresh": {
+          "type": "string",
+          "default": "CTRL/CMD + R",
+          "description": "JJ Graph: The keybinding for refreshing the view (or UNASSIGNED)"
+        },
+        "jjk.graph.keyboardShortcut.scrollToHead": {
+          "type": "string",
+          "default": "CTRL/CMD + H",
+          "description": "JJ Graph: The keybinding for scrolling to the head commit (or UNASSIGNED)"
+        },
+        "jjk.graph.keyboardShortcut.scrollToStash": {
+          "type": "string",
+          "default": "CTRL/CMD + S",
+          "description": "JJ Graph: The keybinding for scrolling to the stash (or UNASSIGNED)"
+        },
+        "jjk.graph.markdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Render commit descriptions and tag messages as markdown"
+        },
+        "jjk.graph.referenceLabels.alignment": {
+          "type": "string",
+          "default": "Normal",
+          "enum": [
+            "Normal",
+            "Branches (on the left) & Tags (on the right)",
+            "Branches (aligned to the graph) & Tags (on the right)"
+          ],
+          "description": "JJ Graph: The alignment of branch and tag reference labels"
+        },
+        "jjk.graph.referenceLabels.combineLocalAndRemoteBranchLabels": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Combine local and remote branch labels when they point to the same commit"
+        },
+        "jjk.graph.repository.commits.fetchAvatars": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Fetch avatars for commit authors (from Gravatar)"
+        },
+        "jjk.graph.repository.commits.initialLoad": {
+          "type": "number",
+          "default": 300,
+          "description": "JJ Graph: The number of commits to initially load"
+        },
+        "jjk.graph.repository.commits.loadMore": {
+          "type": "number",
+          "default": 100,
+          "description": "JJ Graph: The number of commits to load when loading more"
+        },
+        "jjk.graph.repository.commits.loadMoreAutomatically": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Automatically load more commits when scrolling to the bottom"
+        },
+        "jjk.graph.repository.commits.mute.commitsThatAreNotAncestorsOfHead": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Mute commits that are not ancestors of the checked-out change"
+        },
+        "jjk.graph.repository.commits.mute.mergeCommits": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Mute merge commits"
+        },
+        "jjk.graph.repository.onLoad.scrollToHead": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Scroll to the head commit when a repository is loaded"
+        },
+        "jjk.graph.repository.onLoad.showCheckedOutBranch": {
+          "type": "boolean",
+          "default": false,
+          "description": "JJ Graph: Show only the checked-out branch when a repository is loaded"
+        },
+        "jjk.graph.repository.onLoad.showSpecificBranches": {
+          "type": "array",
+          "default": [],
+          "description": "JJ Graph: Show only the specified branches when a repository is loaded"
+        },
+        "jjk.graph.repository.showRemoteBranches": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Show remote branches by default"
+        },
+        "jjk.graph.repository.showTags": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Show tags by default"
+        },
+        "jjk.graph.repositoryDropdownOrder": {
+          "type": "string",
+          "default": "Workspace Full Path",
+          "enum": [
+            "Full Path",
+            "Name",
+            "Workspace Full Path"
+          ],
+          "description": "JJ Graph: The order of repositories in the repository dropdown"
+        },
+        "jjk.graph.retainContextWhenHidden": {
+          "type": "boolean",
+          "default": true,
+          "description": "JJ Graph: Retain the view state when the JJ Graph tab is hidden"
+        },
+        "jjk.graph.tabIconColourTheme": {
+          "type": "string",
+          "default": "colour",
+          "enum": [
+            "colour",
+            "grey"
+          ],
+          "description": "JJ Graph: The colour theme of the JJ Graph tab icon"
         }
       }
     },
@@ -715,10 +1132,10 @@
     ]
   },
   "scripts": {
-    "build": "npm run check-types && npm run lint && node esbuild.js --production && cp -r src/webview dist/ && cp src/config.toml dist/ && mkdir -p dist/codicons && cp -r node_modules/@vscode/codicons/dist/* dist/codicons/ && npm run build:fakeeditor && mkdir -p dist/fakeeditor/zig-out/bin && cp -r src/fakeeditor/zig-out/bin/. dist/fakeeditor/zig-out/bin/",
+    "build": "npm run check-types && npm run lint && node esbuild.js --production && cp -r src/webview dist/ && cp src/config.toml dist/ && mkdir -p dist/codicons && cp -r node_modules/@vscode/codicons/dist/* dist/codicons/ && npm run build:fakeeditor && mkdir -p dist/fakeeditor/zig-out/bin && cp -r src/fakeeditor/zig-out/bin/. dist/fakeeditor/zig-out/bin/ && node scripts/build-graph-web.mjs --production",
     "build:fakeeditor": "cd src/fakeeditor && ./build_all_platforms.sh",
     "vscode:prepublish": "npm run build",
-    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "compile": "npm run check-types && npm run lint && node esbuild.js && node scripts/build-graph-web.mjs",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",

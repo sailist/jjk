@@ -1,5 +1,6 @@
 import path from "path";
 import ansiRegex from "ansi-regex";
+import { logger } from "./logger";
 import type {
   Change,
   FileStatus,
@@ -80,6 +81,7 @@ export const showRecordTemplate = template({
   .field("description", commit.description().escape_json())
   .field("empty", commit.empty())
   .field("conflict", commit.conflict())
+  .field("divergent", raw("self.divergent()"))
   .field("diffFiles", showDiffExpr)
   .build();
 
@@ -287,8 +289,8 @@ export function parseStatus(
             renamedFrom: parsedPaths.fromPath,
           });
         } else {
-          throw new Error(
-            `Unexpected ${type === "R" ? "rename" : "copy"} line: ${line}`,
+          logger.warn(
+            `Skipping unexpected ${type === "R" ? "rename" : "copy"} line: ${line}`,
           );
         }
       } else {
@@ -316,7 +318,8 @@ export function parseStatus(
       ] = commitMatch as unknown as [string, ...(string | undefined)[]];
 
       if (!type || !changeId || !commitId || !descriptionSection) {
-        throw new Error(`Unexpected commit line: ${line}`);
+        logger.warn(`Skipping unexpected commit line: ${line}`);
+        continue;
       }
 
       const descriptionRegions = extractColoredRegions(
@@ -335,7 +338,7 @@ export function parseStatus(
       const isConflict = jjDescriptors.includes("(conflict)");
 
       const commitDetails: Change = {
-        changeId: stripAnsiCodes(changeId),
+        changeId: stripAnsiCodes(changeId).replace(/\/\d+$/, ""),
         commitId: stripAnsiCodes(commitId),
         bookmarks: bookmarks
           ? stripAnsiCodes(bookmarks).split(/\s+/)
@@ -343,6 +346,7 @@ export function parseStatus(
         description: cleanedDescription,
         isEmpty,
         isConflict,
+        isDivergent: jjDescriptors.includes("(divergent)"),
       };
 
       if (stripAnsiCodes(type) === "Working copy") {
@@ -450,6 +454,9 @@ export function parseShowResult(
         break;
       case "conflict":
         ret.change.isConflict = value === "true";
+        break;
+      case "divergent":
+        ret.change.isDivergent = value === "true";
         break;
       case "diffFiles": {
         for (const line of value.split(summaryFileSeparator).filter(Boolean)) {

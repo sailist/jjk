@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"lib": [
+			"es2017",
+			"dom"
+		],
+		"module": "ES2015",
+		"moduleResolution": "node",
+		"types": [],
+		"noFallthroughCasesInSwitch": true,
+		"noImplicitAny": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"useUnknownInCatchVariables": false,
+		"noEmit": true,
+		"strict": true,
+		"target": "es6"
+	},
+	"include": [
+		"./**/*.ts",
+		"../types.ts"
+	]
+}

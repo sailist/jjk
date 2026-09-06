@@ -40,6 +40,7 @@ import { closeScope, scopedDisposable } from "./effectUtils";
 import type { JJGraphWebview } from "./graphWebview";
 import type { OperationLogManager } from "./operationLogTreeView";
 import type { WorkspacesManager } from "./workspacesTreeView";
+import { JJGraphView } from "./graphPanel/jjGraphView";
 
 const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause));
@@ -190,24 +191,38 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
               cwd: workspace.root,
               ignoreWorkingCopy: false,
             });
-            const stackIds = (
+            const stack = (
               yield* getWorkspaceStack(repo.config, workspace.name)
             ).filter(
-              (id) =>
-                status.workingCopy.changeId === "" ||
-                !id.startsWith(status.workingCopy.changeId),
+              (entry) =>
+                status.workingCopy.commitId === "" ||
+                !entry.commitId.startsWith(status.workingCopy.commitId),
             );
             const shows =
-              stackIds.length > 0 ? yield* getShowAll(wsConfig, stackIds) : [];
+              stack.length > 0
+                ? yield* getShowAll(
+                    wsConfig,
+                    stack.map((entry) => entry.changeId),
+                  )
+                : [];
+            const stackCommitIds = new Set(
+              stack.map((entry) => entry.commitId),
+            );
+            const stackShows = shows.filter((show) =>
+              stackCommitIds.has(show.change.commitId),
+            );
             const fileList = yield* getFileList(wsConfig, {
               cwd: workspace.root,
             });
             return computeNewState(
               emptyRepoState,
               repo.mainState.operationId ?? "",
-              { ...status, parentChanges: shows.map((show) => show.change) },
+              { ...status, parentChanges: stackShows.map((show) => show.change) },
               fileList,
-              shows.map((show) => ({ changeId: show.change.changeId, show })),
+              stackShows.map((show) => ({
+                changeId: show.change.changeId,
+                show,
+              })),
               workspace.root,
             );
           }),
@@ -348,6 +363,8 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
     ) {
       void graphWebview.refresh();
     }
+
+    JJGraphView.refresh(repo.config.repositoryRoot);
   };
 
   const initializeRepo = async (info: {

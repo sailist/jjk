@@ -15,6 +15,7 @@ export const createWorkspacesInitHandlers = (
   | "workspaceNew"
   | "workspaceUpdateStale"
   | "workspaceShow"
+  | "workspaceSearch"
 > => ({
   refreshWorkspaces: () =>
     deps.runExtensionEffect(
@@ -86,5 +87,14 @@ export const createWorkspacesInitHandlers = (
       }),
       "Failed to show workspace changes",
     );
+  },
+  workspaceSearch: (item) => {
+    if (!(item instanceof WorkspaceTreeItem)) {
+      return;
+    }
+
+    return vscode.commands.executeCommand("workbench.action.findInFiles", {
+      filesToInclude: item.workspace.root,
+    });
   },
 });

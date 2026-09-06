@@ -246,13 +246,14 @@ export async function initializeExtensionViews(
               if (!workspace.isEmpty) {
                 return false;
               }
-              const stackIds = yield* getWorkspaceStack(
+              const stack = yield* getWorkspaceStack(
                 repo.config,
                 workspace.name,
               );
               return (
-                stackIds.filter((id) => id !== workspace.targetChangeId)
-                  .length === 0
+                stack.filter(
+                  (entry) => entry.changeId !== workspace.targetChangeId,
+                ).length === 0
               );
             }),
           ),

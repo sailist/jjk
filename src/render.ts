@@ -46,6 +46,7 @@ export function computeStateSignature(state: RepoState): string {
       status.workingCopy.description,
       status.workingCopy.isEmpty,
       status.workingCopy.isConflict,
+      status.workingCopy.isDivergent ?? false,
     ],
     fileSignature(status.fileStatuses),
     status.parentChanges.map((change) => {
@@ -56,6 +57,7 @@ export function computeStateSignature(state: RepoState): string {
         change.description,
         change.isEmpty,
         change.isConflict,
+        change.isDivergent ?? false,
         fileSignature(show?.fileStatuses ?? []),
         show ? [...show.conflictedFiles].sort() : [],
       ];
@@ -68,7 +70,9 @@ function getLabel(prefix: string, change: Change) {
     change.description ? ` • ${change.description}` : ""
   }${change.isEmpty ? " (empty)" : ""}${
     change.isConflict ? " (conflict)" : ""
-  }${change.description ? "" : " (no description)"}`;
+  }${change.isDivergent ? " (divergent)" : ""}${
+    change.description ? "" : " (no description)"
+  }`;
 }
 
 function getResourceStateCommand(
@@ -147,7 +151,7 @@ export function applyRenderData(
         toJJUri(
           vscode.Uri.file(`${fileStatus.path}`),
           diffOriginalParams(
-            workspace ? renderData.workingCopy.changeId : "@",
+            workspace ? renderData.workingCopy.commitId : "@",
             fileStatus.path,
           ),
         ),
@@ -158,48 +162,21 @@ export function applyRenderData(
   );
   sourceControl.count = renderData.totalFileCount;
 
-  // Update parent groups: dispose stale ones
   const updatedGroups: vscode.SourceControlResourceGroup[] = [];
-  for (const group of parentGroups) {
-    const parentIndex = renderData.parentChanges.findIndex(
-      (p) => p.change.changeId === group.id,
-    );
-    if (parentIndex === -1) {
-      group.dispose();
-    } else {
-      group.label = getLabel(
-        `@${parentIndex + 1}`,
-        renderData.parentChanges[parentIndex].change,
-      );
-      updatedGroups.push(group);
-    }
-  }
-
-  // Create new groups or update existing
   for (const [
     parentIndex,
     { change: parentChange, fileStatuses },
   ] of renderData.parentChanges.entries()) {
-    let parentChangeResourceGroup: vscode.SourceControlResourceGroup;
-
-    const existingGroup = updatedGroups.find(
-      (group) => group.id === parentChange.changeId,
-    );
-    if (!existingGroup) {
-      parentChangeResourceGroup = sourceControl.createResourceGroup(
-        parentChange.changeId,
-        getLabel(`@${parentIndex + 1}`, parentChange),
-      );
-      updatedGroups.push(parentChangeResourceGroup);
-    } else {
-      parentChangeResourceGroup = existingGroup;
-    }
-
-    parentChangeResourceGroup.resourceStates = fileStatuses.map(
+    const groupId = `@${parentIndex + 1}`;
+    const group =
+      parentGroups.find((group) => group.id === groupId) ??
+      sourceControl.createResourceGroup(groupId, "");
+    group.label = getLabel(groupId, parentChange);
+    group.resourceStates = fileStatuses.map(
       (parentStatus) => ({
         resourceUri: toJJUri(
           vscode.Uri.file(parentStatus.path),
-          revParams(parentChange.changeId, parentStatus.path),
+          revParams(parentChange.commitId, parentStatus.path),
         ),
         decorations: {
           strikeThrough: parentStatus.type === "D",
@@ -209,16 +186,22 @@ export function applyRenderData(
           parentStatus,
           toJJUri(
             vscode.Uri.file(parentStatus.path),
-            diffOriginalParams(parentChange.changeId, parentStatus.path),
+            diffOriginalParams(parentChange.commitId, parentStatus.path),
           ),
           toJJUri(
             vscode.Uri.file(parentStatus.path),
-            revParams(parentChange.changeId, parentStatus.path),
+            revParams(parentChange.commitId, parentStatus.path),
           ),
           `(${parentChange.changeId})`,
         ),
       }),
     );
+    updatedGroups.push(group);
+  }
+  for (const group of parentGroups) {
+    if (!updatedGroups.includes(group)) {
+      group.dispose();
+    }
   }
 
   return updatedGroups;

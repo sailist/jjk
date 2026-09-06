@@ -1,4 +1,4 @@
-import { Duration, Effect, Queue, Stream } from "effect";
+import { Cause, Duration, Effect, Queue, Stream } from "effect";
 import { JJCli } from "./services/JJCli";
 import type { JjWatchmanRegisterSnapshotTriggerRef } from "./services/JjWatchmanSnapshotTriggerRef";
 import type { ExtensionResources } from "./services/ExtensionResources";
@@ -54,8 +54,10 @@ export const repoEventLoop = (
           Effect.tap((newState) =>
             newState ? deps.onStateChanged(newState) : Effect.void,
           ),
-          Effect.catchAll((error) =>
-            Effect.sync(() => logger.error(`Update error: ${String(error)}`)),
+          Effect.catchAllCause((cause) =>
+            Effect.sync(() =>
+              logger.error(`Update error: ${Cause.pretty(cause)}`),
+            ),
           ),
         ),
       ),

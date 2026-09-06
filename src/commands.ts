@@ -6,6 +6,9 @@ type RegisterScoped = <A extends { dispose(): unknown }>(
 
 export interface InitCommandHandlers {
   readonly newChange: (sourceControl: vscode.SourceControl) => unknown;
+  readonly newChangeBeforeWorkingCopy: (
+    resourceGroup: vscode.SourceControlResourceGroup,
+  ) => unknown;
   readonly openFileResourceState: (
     resourceState: vscode.SourceControlResourceState,
   ) => unknown;
@@ -35,6 +38,9 @@ export interface InitCommandHandlers {
   readonly editResourceGroup: (
     resourceGroup: vscode.SourceControlResourceGroup,
   ) => unknown;
+  readonly abandonResourceGroup: (
+    resourceGroup: vscode.SourceControlResourceGroup,
+  ) => unknown;
   readonly refreshGraphWebview: () => unknown;
   readonly newGraphWebview: () => unknown;
   readonly selectGraphWebviewRepo: () => unknown;
@@ -45,6 +51,7 @@ export interface InitCommandHandlers {
   readonly workspaceNew: (item: unknown) => unknown;
   readonly workspaceUpdateStale: (item: unknown) => unknown;
   readonly workspaceShow: (item: unknown) => unknown;
+  readonly workspaceSearch: (item: unknown) => unknown;
   readonly operationUndo: (item: unknown) => unknown;
   readonly operationRestore: (item: unknown) => unknown;
   readonly gitFetch: () => unknown;
@@ -73,6 +80,12 @@ export async function registerInitCommands(
 ): Promise<void> {
   await registerScoped(() =>
     vscode.commands.registerCommand("jj.new", handlers.newChange),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.newChangeBeforeWorkingCopy",
+      handlers.newChangeBeforeWorkingCopy,
+    ),
   );
   await registerScoped(() =>
     vscode.commands.registerCommand(
@@ -139,6 +152,12 @@ export async function registerInitCommands(
   );
   await registerScoped(() =>
     vscode.commands.registerCommand(
+      "jj.abandonResourceGroup",
+      handlers.abandonResourceGroup,
+    ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
       "jj.refreshGraphWebview",
       handlers.refreshGraphWebview,
     ),
@@ -190,6 +209,12 @@ export async function registerInitCommands(
   );
   await registerScoped(() =>
     vscode.commands.registerCommand("jj.workspaceShow", handlers.workspaceShow),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.workspaceSearch",
+      handlers.workspaceSearch,
+    ),
   );
   await registerScoped(() =>
     vscode.commands.registerCommand("jj.operationUndo", handlers.operationUndo),

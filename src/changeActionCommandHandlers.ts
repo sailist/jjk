@@ -1,13 +1,19 @@
 import { Effect } from "effect";
 import type { InitCommandHandlers } from "./commands";
 import type { CommandHandlerDeps } from "./commandHandlerShared";
-import { readRepoState, getActiveWorkspaceRoot } from "./commandHandlerShared";
+import {
+  readRepoState,
+  getActiveWorkspaceRoot,
+  resolveGroupChange,
+} from "./commandHandlerShared";
 import { showInputBox, showQuickPick } from "./services/Vscode";
 import {
   getShow,
+  jjAbandon,
   jjDescribe,
   jjEdit,
   jjNew,
+  jjNewInsertBefore,
   jjRestore,
   jjSquash,
 } from "./services/Repository";
@@ -46,6 +52,7 @@ export const createChangeActionInitHandlers = (
 ): Pick<
   InitCommandHandlers,
   | "newChange"
+  | "newChangeBeforeWorkingCopy"
   | "restoreResourceState"
   | "squashToParentResourceState"
   | "squashToWorkingCopyResourceState"
@@ -54,6 +61,7 @@ export const createChangeActionInitHandlers = (
   | "squashToWorkingCopyResourceGroup"
   | "restoreResourceGroup"
   | "editResourceGroup"
+  | "abandonResourceGroup"
 > => ({
   newChange: (sourceControl) => {
     const repo = deps.repoLocator.findRepoBySourceControl(sourceControl);
@@ -76,6 +84,25 @@ export const createChangeActionInitHandlers = (
       "Failed to create change",
     );
   },
+  newChangeBeforeWorkingCopy: (resourceGroup) => {
+    const repo = deps.repoLocator.findRepoByResourceGroup(resourceGroup);
+    if (!repo) {
+      return;
+    }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
+
+    return deps.runRepoCommand(
+      repo,
+      Effect.gen(function* () {
+        const wcChangeId = readRepoState(repo).status?.workingCopy.changeId;
+        yield* jjNewInsertBefore(repo.config, "@", { cwd });
+        if (wcChangeId) {
+          yield* jjEdit(repo.config, wcChangeId, false, { cwd });
+        }
+      }),
+      "Failed to create change",
+    );
+  },
   restoreResourceState: (...resourceStates) => {
     const resourceGroup =
       deps.repoLocator.getSharedResourceGroup(resourceStates);
@@ -90,6 +117,10 @@ export const createChangeActionInitHandlers = (
       deps.withSourceControlProgress(
         Effect.gen(function* () {
           const state = readRepoState(repo);
+          const groupChange = resolveGroupChange(repo, resourceGroup);
+          if (!groupChange) {
+            return;
+          }
 
           let statuses: FileStatus[];
           if (repo.workingCopyGroup === resourceGroup) {
@@ -106,7 +137,7 @@ export const createChangeActionInitHandlers = (
               return found;
             });
           } else {
-            const show = state.parentShowResults.get(resourceGroup.id);
+            const show = state.parentShowResults.get(groupChange.changeId);
             if (!show) {
               return;
             }
@@ -127,9 +158,13 @@ export const createChangeActionInitHandlers = (
           ]);
 
           yield* deps.retryImmutable(
-            jjRestore(repo.config, resourceGroup.id, paths, false, { cwd }),
-            `${resourceGroup.id} is immutable, are you sure?`,
-            jjRestore(repo.config, resourceGroup.id, paths, true, { cwd }),
+            jjRestore(repo.config, groupChange.commitId, paths, false, {
+              cwd,
+            }),
+            `${groupChange.changeId} is immutable, are you sure?`,
+            jjRestore(repo.config, groupChange.commitId, paths, true, {
+              cwd,
+            }),
           );
         }),
       ),
@@ -185,7 +220,7 @@ export const createChangeActionInitHandlers = (
           yield* deps.retryImmutable(
             jjSquash(repo.config, {
               fromRev: "@",
-              toRev: destinationParentChange.changeId,
+              toRev: destinationParentChange.commitId,
               message: promptResult.message,
               filepaths: resourceStates.map(
                 (resourceState) => resourceState.resourceUri.fsPath,
@@ -195,7 +230,7 @@ export const createChangeActionInitHandlers = (
             `${destinationParentChange.changeId} is immutable, are you sure?`,
             jjSquash(repo.config, {
               fromRev: "@",
-              toRev: destinationParentChange.changeId,
+              toRev: destinationParentChange.commitId,
               message: promptResult.message,
               filepaths: resourceStates.map(
                 (resourceState) => resourceState.resourceUri.fsPath,
@@ -227,10 +262,8 @@ export const createChangeActionInitHandlers = (
             return;
           }
 
-          const parentChange = state.status.parentChanges.find(
-            (change) => change.changeId === resourceGroup.id,
-          );
-          if (!parentChange) {
+          const parentChange = resolveGroupChange(repo, resourceGroup);
+          if (!parentChange || parentChange === state.status.workingCopy) {
             return;
           }
 
@@ -246,7 +279,7 @@ export const createChangeActionInitHandlers = (
 
           yield* deps.retryImmutable(
             jjSquash(repo.config, {
-              fromRev: resourceGroup.id,
+              fromRev: parentChange.commitId,
               toRev: "@",
               message: promptResult.message,
               filepaths: resourceStates.map(
@@ -254,9 +287,9 @@ export const createChangeActionInitHandlers = (
               ),
               cwd,
             }),
-            `${resourceGroup.id} is immutable, are you sure?`,
+            `${parentChange.changeId} is immutable, are you sure?`,
             jjSquash(repo.config, {
-              fromRev: resourceGroup.id,
+              fromRev: parentChange.commitId,
               toRev: "@",
               message: promptResult.message,
               filepaths: resourceStates.map(
@@ -276,16 +309,14 @@ export const createChangeActionInitHandlers = (
     if (!repo) {
       return;
     }
-    const cwd = getActiveWorkspaceRoot(deps, repo);
 
     return deps.runRepoCommand(
       repo,
       Effect.gen(function* () {
-        const rev =
-          cwd !== undefined && resourceGroup.id === "@"
-            ? (readRepoState(repo).status?.workingCopy.changeId ??
-              resourceGroup.id)
-            : resourceGroup.id;
+        const rev = resolveGroupChange(repo, resourceGroup)?.commitId;
+        if (!rev) {
+          return;
+        }
         const showResult = yield* getShow(repo.config, rev);
         const message = yield* showInputBox({
           prompt: "Provide a description",
@@ -351,14 +382,14 @@ export const createChangeActionInitHandlers = (
           yield* deps.retryImmutable(
             jjSquash(repo.config, {
               fromRev: "@",
-              toRev: destinationParentChange.changeId,
+              toRev: destinationParentChange.commitId,
               message: promptResult.message,
               cwd,
             }),
             `${destinationParentChange.changeId} is immutable, are you sure?`,
             jjSquash(repo.config, {
               fromRev: "@",
-              toRev: destinationParentChange.changeId,
+              toRev: destinationParentChange.commitId,
               message: promptResult.message,
               ignoreImmutable: true,
               cwd,
@@ -385,10 +416,8 @@ export const createChangeActionInitHandlers = (
             return;
           }
 
-          const parentChange = state.status.parentChanges.find(
-            (change) => change.changeId === resourceGroup.id,
-          );
-          if (!parentChange) {
+          const parentChange = resolveGroupChange(repo, resourceGroup);
+          if (!parentChange || parentChange === state.status.workingCopy) {
             return;
           }
 
@@ -403,14 +432,14 @@ export const createChangeActionInitHandlers = (
 
           yield* deps.retryImmutable(
             jjSquash(repo.config, {
-              fromRev: resourceGroup.id,
+              fromRev: parentChange.commitId,
               toRev: "@",
               message: promptResult.message,
               cwd,
             }),
-            `${resourceGroup.id} is immutable, are you sure?`,
+            `${parentChange.changeId} is immutable, are you sure?`,
             jjSquash(repo.config, {
-              fromRev: resourceGroup.id,
+              fromRev: parentChange.commitId,
               toRev: "@",
               message: promptResult.message,
               ignoreImmutable: true,
@@ -428,14 +457,18 @@ export const createChangeActionInitHandlers = (
       return;
     }
     const cwd = getActiveWorkspaceRoot(deps, repo);
+    const change = resolveGroupChange(repo, resourceGroup);
+    if (!change) {
+      return;
+    }
 
     return deps.runRepoCommand(
       repo,
       deps.withSourceControlProgress(
         deps.retryImmutable(
-          jjRestore(repo.config, resourceGroup.id, undefined, false, { cwd }),
-          `${resourceGroup.id} is immutable, are you sure?`,
-          jjRestore(repo.config, resourceGroup.id, undefined, true, { cwd }),
+          jjRestore(repo.config, change.commitId, undefined, false, { cwd }),
+          `${change.changeId} is immutable, are you sure?`,
+          jjRestore(repo.config, change.commitId, undefined, true, { cwd }),
         ),
       ),
       "Failed to restore",
@@ -447,15 +480,40 @@ export const createChangeActionInitHandlers = (
       return;
     }
     const cwd = getActiveWorkspaceRoot(deps, repo);
+    const change = resolveGroupChange(repo, resourceGroup);
+    if (!change) {
+      return;
+    }
 
     return deps.runRepoCommand(
       repo,
       deps.retryImmutable(
-        jjEdit(repo.config, resourceGroup.id, false, { cwd }),
-        `${resourceGroup.id} is immutable, are you sure?`,
-        jjEdit(repo.config, resourceGroup.id, true, { cwd }),
+        jjEdit(repo.config, change.commitId, false, { cwd }),
+        `${change.changeId} is immutable, are you sure?`,
+        jjEdit(repo.config, change.commitId, true, { cwd }),
       ),
       "Failed to switch to change",
+    );
+  },
+  abandonResourceGroup: (resourceGroup) => {
+    const repo = deps.repoLocator.findRepoByResourceGroup(resourceGroup);
+    if (!repo) {
+      return;
+    }
+    const cwd = getActiveWorkspaceRoot(deps, repo);
+    const change = resolveGroupChange(repo, resourceGroup);
+    if (!change || change === readRepoState(repo).status?.workingCopy) {
+      return;
+    }
+
+    return deps.runRepoCommand(
+      repo,
+      deps.retryImmutable(
+        jjAbandon(repo.config, change.commitId, false, { cwd }),
+        `${change.changeId} is immutable, are you sure?`,
+        jjAbandon(repo.config, change.commitId, true, { cwd }),
+      ),
+      "Failed to abandon change",
     );
   },
 });

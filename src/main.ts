@@ -43,6 +43,11 @@ import {
 } from "./effectRunners";
 import { makeRepoLifecycle } from "./repoLifecycle";
 import { initializeExtensionViews } from "./extensionViews";
+import { JJGraphView, type JJGraphRepoSource } from "./graphPanel/jjGraphView";
+import { JJDataSource } from "./graphPanel/dataSource";
+import { JJGraphExtensionState } from "./graphPanel/extensionState";
+import { AvatarManager } from "./graphPanel/avatarManager";
+import { DiffDocProvider } from "./graphPanel/diffDocProvider";
 
 export async function activate(context: vscode.ExtensionContext) {
   const vscodeLayer = VscodeLive(context);
@@ -183,6 +188,55 @@ export async function activate(context: vscode.ExtensionContext) {
   await runInExtensionScope(selectedRepoController.reconcileSelection());
   const selectedRepo = selectedRepoController;
 
+  // --- JJ Graph panel (editor-area webview) ---
+  const graphLogger = {
+    log: (message: string) => logger.info(message),
+    logError: (message: string) => logger.error(message),
+  };
+  const graphPanelState = new JJGraphExtensionState(context);
+  const graphDataSource = new JJDataSource(
+    extensionResourcesConfig.configTomlPath,
+    (repo) =>
+      repos.find((handle) => handle.config.repositoryRoot === repo)?.config
+        .jjPath ?? "jj",
+    () => repos[0]?.config.jjPath ?? "jj",
+    graphLogger,
+  );
+  const graphAvatarManager = new AvatarManager(graphPanelState, graphLogger);
+  const graphDiffDocProvider = new DiffDocProvider(graphDataSource);
+  await registerScoped(() =>
+    vscode.workspace.registerTextDocumentContentProvider(
+      DiffDocProvider.scheme,
+      graphDiffDocProvider,
+    ),
+  );
+  const graphReposChangedEmitter = await registerScoped(
+    () => new vscode.EventEmitter<void>(),
+  );
+  const graphRepoSource: JJGraphRepoSource = {
+    getRepos: () => repos.map((repo) => repo.config.repositoryRoot),
+    getSelectedRepo: () =>
+      selectedRepo.getSelectedRepo()?.config.repositoryRoot ?? null,
+    onDidChange: graphReposChangedEmitter.event,
+    rescan: () =>
+      runExtensionEffect(
+        syncReposWithWorkspaceFolders().pipe(Effect.zipRight(poll())),
+        "Failed to rescan repositories for JJ Graph",
+      ),
+  };
+  await registerScoped(() =>
+    vscode.commands.registerCommand("jj.openGraph", () => {
+      JJGraphView.createOrShow(
+        context.extensionUri,
+        graphDataSource,
+        graphRepoSource,
+        graphPanelState,
+        graphAvatarManager,
+        graphLogger,
+      );
+    }),
+  );
+
   // --- Workspace folder change listener ---
   await registerScoped(() =>
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -194,6 +248,7 @@ export async function activate(context: vscode.ExtensionContext) {
         ),
         "Failed to sync workspace folders",
       );
+      graphReposChangedEmitter.fire();
     }),
   );
 

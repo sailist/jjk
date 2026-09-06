@@ -13,7 +13,7 @@ import type { SelectedRepositoryController } from "./selectedRepository";
 import type { RepoLocator } from "./repoLocator";
 import type { RepoState } from "./services/RepoState";
 import { JJImmutableError } from "./types";
-import type { JJCliError } from "./types";
+import type { Change, JJCliError } from "./types";
 import { pathEquals } from "./utils";
 
 export type RepoEffectEnv =
@@ -90,6 +90,24 @@ export const toError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error(String(cause));
 
 export const readRepoState = (repo: RepoHandle): RepoState => repo.currentState;
+
+export const resolveGroupChange = (
+  repo: RepoHandle,
+  resourceGroup: vscode.SourceControlResourceGroup,
+): Change | undefined => {
+  const status = repo.currentState.status;
+  if (!status) {
+    return undefined;
+  }
+  if (resourceGroup.id === "@") {
+    return status.workingCopy;
+  }
+  const match = /^@(\d+)$/.exec(resourceGroup.id);
+  if (!match) {
+    return undefined;
+  }
+  return status.parentChanges[Number(match[1]) - 1];
+};
 
 export const getActiveWorkspaceRoot = (
   deps: CommandHandlerDeps,
