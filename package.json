@@ -39,9 +39,20 @@
           "id": "jjWorkspaces",
           "name": "Workspaces (JJ)",
           "when": "jj.reposExist"
+        },
+        {
+          "id": "jjReviewFiles",
+          "name": "Review Files (JJ)",
+          "when": "jj.reposExist"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "jjReviewFiles",
+        "contents": "Open a review (Jujutsu: Open Review) to see its files here."
+      }
+    ],
     "commands": [
       {
         "command": "jj.refresh",
@@ -257,6 +268,49 @@
         "title": "JJ Graph",
         "category": "JJ",
         "icon": "$(graph)"
+      },
+      {
+        "command": "jj.openReview",
+        "title": "Open Review",
+        "category": "Jujutsu",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "jj.review.addComment",
+        "title": "Comment",
+        "category": "Jujutsu",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "jj.review.replyComment",
+        "title": "Reply",
+        "category": "Jujutsu",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "jj.review.editComment",
+        "title": "Edit Comment",
+        "category": "Jujutsu"
+      },
+      {
+        "command": "jj.review.saveComment",
+        "title": "Save Comment",
+        "category": "Jujutsu"
+      },
+      {
+        "command": "jj.review.cancelEditComment",
+        "title": "Cancel",
+        "category": "Jujutsu"
+      },
+      {
+        "command": "jj.review.deleteComment",
+        "title": "Delete Comment",
+        "category": "Jujutsu"
+      },
+      {
+        "command": "jj.review.deleteThread",
+        "title": "Delete Thread",
+        "category": "Jujutsu"
       }
     ],
     "menus": {
@@ -413,6 +467,11 @@
           "command": "jj.abandonResourceGroup",
           "when": "scmProvider == jj && scmResourceGroup != @",
           "group": "inline"
+        },
+        {
+          "command": "jj.openReview",
+          "when": "scmProvider == jj",
+          "group": "1_review"
         }
       ],
       "scm/resourceState/context": [
@@ -459,7 +518,78 @@
           "group": "inline"
         }
       ],
+      "comments/commentThread/title": [
+        {
+          "command": "jj.review.deleteThread",
+          "when": "commentController == jjk-review && !commentThreadIsEmpty",
+          "group": "navigation"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "jj.review.addComment",
+          "when": "commentController == jjk-review && commentThreadIsEmpty",
+          "group": "inline"
+        },
+        {
+          "command": "jj.review.replyComment",
+          "when": "commentController == jjk-review && !commentThreadIsEmpty",
+          "group": "inline"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "jj.review.editComment",
+          "when": "commentController == jjk-review",
+          "group": "group@1"
+        },
+        {
+          "command": "jj.review.deleteComment",
+          "when": "commentController == jjk-review",
+          "group": "group@2"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "jj.review.cancelEditComment",
+          "when": "commentController == jjk-review",
+          "group": "inline@1"
+        },
+        {
+          "command": "jj.review.saveComment",
+          "when": "commentController == jjk-review",
+          "group": "inline@2"
+        }
+      ],
       "commandPalette": [
+        {
+          "command": "jj.review.addComment",
+          "when": "false"
+        },
+        {
+          "command": "jj.review.replyComment",
+          "when": "false"
+        },
+        {
+          "command": "jj.review.editComment",
+          "when": "false"
+        },
+        {
+          "command": "jj.review.saveComment",
+          "when": "false"
+        },
+        {
+          "command": "jj.review.cancelEditComment",
+          "when": "false"
+        },
+        {
+          "command": "jj.review.deleteComment",
+          "when": "false"
+        },
+        {
+          "command": "jj.review.deleteThread",
+          "when": "false"
+        },
         {
           "command": "jj.newChangeBeforeWorkingCopy",
           "when": "false"

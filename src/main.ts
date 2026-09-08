@@ -48,6 +48,13 @@ import { JJDataSource } from "./graphPanel/dataSource";
 import { JJGraphExtensionState } from "./graphPanel/extensionState";
 import { AvatarManager } from "./graphPanel/avatarManager";
 import { DiffDocProvider } from "./graphPanel/diffDocProvider";
+import { ReviewCommentStore } from "./review/commentStore";
+import { ReviewManager } from "./review/reviewManager";
+import { ReviewFilesView } from "./review/reviewFilesTreeView";
+import {
+  EmptyReviewDocProvider,
+  EMPTY_REVIEW_DOC_SCHEME,
+} from "./review/emptyDocProvider";
 
 export async function activate(context: vscode.ExtensionContext) {
   const vscodeLayer = VscodeLive(context);
@@ -210,6 +217,18 @@ export async function activate(context: vscode.ExtensionContext) {
       graphDiffDocProvider,
     ),
   );
+
+  // --- Review panel ---
+  const reviewStore = new ReviewCommentStore();
+  const reviewManager = new ReviewManager(reviewStore);
+  const reviewFilesView = new ReviewFilesView(reviewManager);
+  context.subscriptions.push(reviewManager, reviewFilesView);
+  await registerScoped(() =>
+    vscode.workspace.registerTextDocumentContentProvider(
+      EMPTY_REVIEW_DOC_SCHEME,
+      new EmptyReviewDocProvider(),
+    ),
+  );
   const graphReposChangedEmitter = await registerScoped(
     () => new vscode.EventEmitter<void>(),
   );
@@ -299,6 +318,7 @@ export async function activate(context: vscode.ExtensionContext) {
       getGraphWebview: () => extensionViews?.graphWebview,
       getOperationLogManager: () => extensionViews?.operationLogManager,
       getWorkspacesManager: () => extensionViews?.workspacesManager,
+      getReviewManager: () => reviewManager,
       getLastOpenedFileUri: () =>
         extensionViews?.getLastOpenedFileUri() ?? undefined,
       markGitFetchStarted: () => {
@@ -327,6 +347,7 @@ export async function activate(context: vscode.ExtensionContext) {
       getGraphWebview: () => extensionViews?.graphWebview,
       getOperationLogManager: () => extensionViews?.operationLogManager,
       getWorkspacesManager: () => extensionViews?.workspacesManager,
+      getReviewManager: () => reviewManager,
       getLastOpenedFileUri: () =>
         extensionViews?.getLastOpenedFileUri() ?? undefined,
       markGitFetchStarted: () => {

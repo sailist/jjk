@@ -10,6 +10,7 @@ import type { JJGraphWebview } from "./graphWebview";
 import type { OperationLogManager } from "./operationLogTreeView";
 import type { WorkspacesManager } from "./workspacesTreeView";
 import type { SelectedRepositoryController } from "./selectedRepository";
+import type { ReviewManager } from "./review/reviewManager";
 import type { RepoLocator } from "./repoLocator";
 import type { RepoState } from "./services/RepoState";
 import { JJImmutableError } from "./types";
@@ -62,6 +63,7 @@ export interface CommandHandlerDeps {
   readonly getGraphWebview: () => JJGraphWebview | undefined;
   readonly getOperationLogManager: () => OperationLogManager | undefined;
   readonly getWorkspacesManager: () => WorkspacesManager | undefined;
+  readonly getReviewManager: () => ReviewManager;
   readonly getLastOpenedFileUri: () => vscode.Uri | undefined;
   readonly markGitFetchStarted: () => void;
   readonly refreshGitFetchStatus: () => Effect.Effect<void, Error, Vscode>;

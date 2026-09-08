@@ -58,6 +58,9 @@ export interface InitCommandHandlers {
   readonly squashSelectedRanges: () => unknown;
   readonly openParentChange: (uri: vscode.Uri) => unknown;
   readonly openChildChange: (uri: vscode.Uri) => unknown;
+  readonly openReview: (
+    resourceGroup?: vscode.SourceControlResourceGroup,
+  ) => unknown;
 }
 
 export interface GlobalCommandHandlers {
@@ -245,6 +248,9 @@ export async function registerInitCommands(
       "jj.openChildChange",
       handlers.openChildChange,
     ),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand("jj.openReview", handlers.openReview),
   );
 }
 

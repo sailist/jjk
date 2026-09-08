@@ -314,10 +314,7 @@ export const getShowAll = (
         "-T",
         rt.template,
         "--no-graph",
-        ...revsets.flatMap((revset) => [
-          "-r",
-          /^[k-z]{8,}$/.test(revset) ? `change_id(${revset})` : revset,
-        ]),
+        ...revsets.flatMap((revset) => ["-r", toLogRevset(revset)]),
       ],
       { timeout: 5000, ignoreWorkingCopy: true },
     );
@@ -921,6 +918,10 @@ export const getDiffOriginal = (
 
 function filepathToFileset(filepath: string): string {
   return `file:"${filepath.replaceAll(/\\/g, "\\\\")}"`;
+}
+
+function toLogRevset(rev: string): string {
+  return /^[k-z]{8,}$/.test(rev) ? `change_id(${rev})` : rev;
 }
 
 function toError(cause: unknown): Error {

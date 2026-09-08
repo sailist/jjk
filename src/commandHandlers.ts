@@ -7,6 +7,7 @@ import {
 } from "./navigationCommandHandlers";
 import { createSelectionSquashInitHandlers } from "./selectionSquashCommandHandlers";
 import { createWorkspacesInitHandlers } from "./workspaceCommandHandlers";
+import { createReviewInitHandlers } from "./review/reviewCommandHandlers";
 
 export type { CommandHandlerDeps } from "./commandHandlerShared";
 
@@ -17,6 +18,7 @@ export const createInitCommandHandlers = (
   ...createNavigationInitHandlers(deps),
   ...createSelectionSquashInitHandlers(deps),
   ...createWorkspacesInitHandlers(deps),
+  ...createReviewInitHandlers(deps),
 });
 
 export const createGlobalCommandHandlers = (
