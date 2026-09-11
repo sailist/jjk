@@ -5,7 +5,7 @@ import semver from "semver";
 import { JJCli, getPollIgnoreWorkingCopyArgs } from "./JJCli";
 import { ExtensionResources } from "./ExtensionResources";
 import type { JjWatchmanRegisterSnapshotTriggerRef } from "./JjWatchmanSnapshotTriggerRef";
-import type { Vscode } from "./Vscode";
+import { getConfigurationValue, type Vscode } from "./Vscode";
 import {
   parseStatus,
   parseShowResult,
@@ -20,6 +20,7 @@ import {
   showRecordTemplate,
 } from "../parsers";
 import { pathEquals } from "../utils";
+import { buildBaseRevset } from "../baseRevset";
 import { logger } from "../logger";
 import {
   RepositoryConfig,
@@ -31,6 +32,7 @@ import {
   JJImmutableError,
   RepositoryDataError,
 } from "../types";
+import type { FileStatus, FileStatusType } from "../types";
 
 type RepositoryEnv =
   | JJCli
@@ -95,6 +97,19 @@ export const getWorkspaceList = (
     return parseWorkspaceList(output, rt);
   });
 
+export const getBaseRevset = (): Effect.Effect<string, never, Vscode> =>
+  Effect.map(getConfigurationValue<string[]>("jjk", "baseBookmarks"), (configured) =>
+    buildBaseRevset(configured),
+  );
+
+const quoteDescriptionGlob = (value: string): string => {
+  const globEscaped = value.replace(/[\\*?[\]]/g, (ch) => "\\" + ch);
+  const stringEscaped = globEscaped
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
+  return '"' + stringEscaped + '*"';
+};
+
 export const getWorkspaceStack = (
   _config: RepositoryConfig,
   workspaceName: string,
@@ -106,16 +121,15 @@ export const getWorkspaceStack = (
   Effect.gen(function* () {
     const cli = yield* JJCli;
     const wsRef = `${workspaceName}@`;
-    const timestampTemplate =
-      'commit_id ++ " " ++ change_id ++ " " ++ self.committer().timestamp().format("%s%.3f") ++ "\\n"';
+    const baseline = yield* getBaseRevset();
     const candidatesOutput = yield* cli.run(
       [
         "log",
         "--no-graph",
         "-r",
-        `::(${wsRef}) ~ ::trunk()`,
+        `::(${wsRef}) ~ ::(${baseline})`,
         "-T",
-        timestampTemplate,
+        'commit_id ++ " " ++ change_id ++ " " ++ if(empty, "1", "") ++ "\\x1f" ++ description.first_line() ++ "\\n"',
       ],
       { timeout: 5000, ignoreWorkingCopy: true },
     );
@@ -136,123 +150,119 @@ export const getWorkspaceStack = (
         .map((line) => line.trim())
         .filter((line) => line !== ""),
     );
-    const candidates: {
+    let candidates: {
       commitId: string;
       changeId: string;
-      timestamp: number;
+      isEmpty: boolean;
+      description: string;
     }[] = [];
-    const candidateIndexById = new Map<string, number>();
     for (const line of candidatesOutput.split("\n")) {
       const trimmed = line.trim();
       if (trimmed === "") {
         continue;
       }
-      const [commitId, changeId, timestampRaw] = trimmed.split(" ");
-      const timestamp = Number(timestampRaw);
-      const existingIndex = candidateIndexById.get(changeId);
-      if (existingIndex === undefined) {
-        candidateIndexById.set(changeId, candidates.length);
-        candidates.push({ commitId, changeId, timestamp });
-      } else if (timestamp > candidates[existingIndex].timestamp) {
-        candidates[existingIndex] = { commitId, changeId, timestamp };
+      const [idPart, description = ""] = trimmed.split("\x1f");
+      const [commitId, changeId, emptyFlag] = idPart.split(" ");
+      if (!candidates.some((candidate) => candidate.changeId === changeId)) {
+        candidates.push({
+          commitId,
+          changeId,
+          isEmpty: emptyFlag === "1",
+          description,
+        });
       }
+    }
+    const emptyWithDescription = candidates.filter(
+      (candidate) => candidate.isEmpty && candidate.description !== "",
+    );
+    if (emptyWithDescription.length > 0) {
+      const descriptionFilter = emptyWithDescription
+        .map(
+          (candidate) =>
+            `description(glob:${quoteDescriptionGlob(candidate.description)})`,
+        )
+        .join(" | ");
+      const mergedOutput = yield* cli.run(
+        [
+          "log",
+          "--no-graph",
+          "-r",
+          `::(${baseline}) & ~empty() & (${descriptionFilter})`,
+          "-T",
+          'description.first_line() ++ "\\n"',
+        ],
+        { timeout: 5000, ignoreWorkingCopy: true },
+      );
+      const mergedDescriptions = new Set(
+        mergedOutput
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line !== ""),
+      );
+      candidates = candidates.filter(
+        (candidate) =>
+          !(
+            candidate.isEmpty &&
+            candidate.description !== "" &&
+            mergedDescriptions.has(candidate.description)
+          ),
+      );
     }
     const shared = candidates.filter((candidate) =>
       otherChangeIds.has(candidate.changeId),
     );
     if (shared.length === 0) {
-      return candidates.map((candidate) => ({
-        changeId: candidate.changeId,
-        commitId: candidate.commitId,
+      return candidates.map(({ commitId, changeId }) => ({
+        commitId,
+        changeId,
       }));
     }
     const workspaces = yield* getWorkspaceList(_config);
-    const sharedRevset = shared
-      .map((candidate) => `change_id(${candidate.changeId})`)
-      .join(" | ");
-    const ownership = new Map<
-      string,
-      { own: number; otherMax: number; otherMinName: string }
-    >(
-      shared.map((candidate) => [
-        candidate.changeId,
-        {
-          own: candidate.timestamp,
-          otherMax: Number.NEGATIVE_INFINITY,
-          otherMinName: "",
-        },
-      ]),
-    );
     const otherOutputs = yield* Effect.all(
       workspaces
         .filter((workspace) => workspace.name !== workspaceName)
         .map((workspace) =>
-          cli
-            .run(
-              [
-                "log",
-                "--no-graph",
-                "-r",
-                `(::(${workspace.name}@)) & (${sharedRevset})`,
-                "-T",
-                timestampTemplate,
-              ],
-              { timeout: 5000, ignoreWorkingCopy: true },
-            )
-            .pipe(
-              Effect.map((output) => ({
-                otherName: workspace.name,
-                output,
-              })),
-            ),
+          cli.run(
+            [
+              "log",
+              "--no-graph",
+              "-r",
+              `::(${workspace.name}@) ~ ::(${baseline})`,
+              "-T",
+              'change_id ++ "\\n"',
+            ],
+            { timeout: 5000, ignoreWorkingCopy: true },
+          ),
         ),
       { concurrency: "unbounded" },
     );
-    for (const { otherName, output } of otherOutputs) {
-      const latestById = new Map<string, number>();
+    const otherMinIndexById = new Map<string, number>();
+    for (const output of otherOutputs) {
+      const indexById = new Map<string, number>();
       for (const line of output.split("\n")) {
-        const trimmed = line.trim();
-        if (trimmed === "") {
+        const changeId = line.trim();
+        if (changeId === "" || indexById.has(changeId)) {
           continue;
         }
-        const [changeId, timestampRaw] = trimmed.split(" ");
-        const timestamp = Number(timestampRaw);
-        const latest = latestById.get(changeId);
-        if (latest === undefined || timestamp > latest) {
-          latestById.set(changeId, timestamp);
-        }
+        indexById.set(changeId, indexById.size);
       }
-      for (const [changeId, timestamp] of latestById) {
-        const info = ownership.get(changeId);
-        if (!info) {
-          continue;
-        }
-        if (timestamp > info.otherMax) {
-          info.otherMax = timestamp;
-          info.otherMinName = otherName;
-        } else if (timestamp === info.otherMax && otherName < info.otherMinName) {
-          info.otherMinName = otherName;
+      for (const [changeId, index] of indexById) {
+        const current = otherMinIndexById.get(changeId);
+        if (current === undefined || index < current) {
+          otherMinIndexById.set(changeId, index);
         }
       }
     }
-    return candidates
-      .filter((candidate) => {
-        const info = ownership.get(candidate.changeId);
-        if (!info) {
-          return true;
-        }
-        if (info.own > info.otherMax) {
-          return true;
-        }
-        if (info.own < info.otherMax) {
-          return false;
-        }
-        return info.otherMinName === "" || workspaceName < info.otherMinName;
-      })
-      .map((candidate) => ({
-        changeId: candidate.changeId,
-        commitId: candidate.commitId,
-      }));
+    return candidates.filter((candidate) => {
+      const otherMinIndex = otherMinIndexById.get(candidate.changeId);
+      if (otherMinIndex === undefined) {
+        return true;
+      }
+      const ownIndex = candidates.findIndex(
+        (entry) => entry.changeId === candidate.changeId,
+      );
+      return ownIndex <= otherMinIndex;
+    });
   });
 
 export const getFileList = (
@@ -346,6 +356,56 @@ export const getShowAll = (
       }
     }
     return shows;
+  });
+
+function parseDiffSummary(
+  repositoryRoot: string,
+  output: string,
+): FileStatus[] {
+  const fileStatuses: FileStatus[] = [];
+  for (const line of output.split("\n")) {
+    const match = /^([AMDRC]) (.+)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const type = match[1] as FileStatusType;
+    const file = match[2];
+    if (type === "R" || type === "C") {
+      const parsedPaths = parseRenamePaths(file);
+      if (parsedPaths) {
+        fileStatuses.push({
+          type,
+          file: parsedPaths.toPath,
+          path: path.join(repositoryRoot, parsedPaths.toPath),
+          renamedFrom: parsedPaths.fromPath,
+        });
+      } else {
+        logger.warn(`Skipping unexpected rename/copy line: ${line}`);
+      }
+    } else {
+      const normalizedFile = path.normalize(file).replace(/\\/g, "/");
+      fileStatuses.push({
+        type,
+        file: normalizedFile,
+        path: path.join(repositoryRoot, normalizedFile),
+      });
+    }
+  }
+  return fileStatuses;
+}
+
+export const getDiffSummary = (
+  config: RepositoryConfig,
+  fromRev: string,
+  toRev: string,
+): Effect.Effect<FileStatus[], JJCliError | JJImmutableError, RepositoryEnv> =>
+  Effect.gen(function* () {
+    const cli = yield* JJCli;
+    const output = yield* cli.run(
+      ["diff", "--summary", "--from", fromRev, "--to", toRev],
+      { timeout: 5000, ignoreWorkingCopy: true },
+    );
+    return parseDiffSummary(config.repositoryRoot, output);
   });
 
 // --- Mutation operations ---
@@ -812,6 +872,67 @@ export const jjSquashContent = (
     }
   });
 
+interface DiffOriginalRevInfo {
+  parentCommitId: string;
+  files: FileStatus[];
+}
+
+const diffOriginalRevInfoCache = new Map<string, DiffOriginalRevInfo>();
+
+const getDiffOriginalRevInfo = (
+  config: RepositoryConfig,
+  rev: string,
+): Effect.Effect<
+  DiffOriginalRevInfo,
+  JJCliError | JJImmutableError,
+  RepositoryEnv
+> =>
+  Effect.gen(function* () {
+    const cacheable = /^[0-9a-f]{12,}$/.test(rev);
+    const cacheKey = `${config.repositoryRoot}\n${rev}`;
+    if (cacheable) {
+      const cached = diffOriginalRevInfoCache.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
+    const cli = yield* JJCli;
+    const [summaryOutput, parentsOutput] = yield* Effect.all(
+      [
+        cli.run(["diff", "--summary", "-r", rev], {
+          timeout: 5000,
+          ignoreWorkingCopy: true,
+        }),
+        cli.run(
+          [
+            "log",
+            "--no-graph",
+            "-r",
+            rev,
+            "-T",
+            'self.parents().map(|c| c.commit_id()).join("\\n")',
+          ],
+          { timeout: 5000, ignoreWorkingCopy: true },
+        ),
+      ],
+      { concurrency: 2 },
+    );
+    const info: DiffOriginalRevInfo = {
+      parentCommitId: parentsOutput.split("\n")[0]?.trim() ?? "",
+      files: parseDiffSummary(config.repositoryRoot, summaryOutput),
+    };
+    if (cacheable) {
+      if (diffOriginalRevInfoCache.size >= 50) {
+        const oldest = diffOriginalRevInfoCache.keys().next().value;
+        if (oldest !== undefined) {
+          diffOriginalRevInfoCache.delete(oldest);
+        }
+      }
+      diffOriginalRevInfoCache.set(cacheKey, info);
+    }
+    return info;
+  });
+
 export const getDiffOriginal = (
   config: RepositoryConfig,
   rev: string,
@@ -822,96 +943,34 @@ export const getDiffOriginal = (
   RepositoryEnv
 > =>
   Effect.gen(function* () {
-    const cli = yield* JJCli;
-    const resources = yield* ExtensionResources;
-    const session = yield* resources.createFakeeditorSession();
-
-    try {
-      const handle = yield* cli.runWithFakeeditor(
-        ["diff", "--summary", "--tool", resources.fakeEditorPath, "-r", rev],
-        { timeout: 10_000, env: session.envVars },
-      );
-
-      const fullOutput = handle.output;
-      const lines = fullOutput.trim().split("\n");
-      const pidLineIdx =
-        lines.findIndex((line) => line.includes(resources.fakeEditorPath)) - 2;
-      if (pidLineIdx < 0) {
-        throw new Error("PID line not found.");
-      }
-      if (pidLineIdx + 3 >= lines.length) {
-        throw new Error(`Unexpected output from fakeeditor: ${fullOutput}`);
-      }
-
-      const summaryLines = lines.slice(0, pidLineIdx);
-      const fakeEditorPID = lines[pidLineIdx];
-      const fakeEditorCWD = lines[pidLineIdx + 1];
-      // lines[pidLineIdx + 2] is the fakeeditor executable path
-      const leftFolderPath = lines[pidLineIdx + 3];
-
-      const leftFolderAbsolutePath = resolveAbsolutePath(
-        leftFolderPath,
-        fakeEditorCWD,
-      );
-
-      try {
-        let pathInLeftFolder: string | undefined;
-
-        for (const summaryLineRaw of summaryLines) {
-          const summaryLine = summaryLineRaw.trim();
-          const type = summaryLine.charAt(0);
-          const file = summaryLine.slice(2).trim();
-
-          if (type === "M" || type === "D") {
-            const normalizedSummaryPath = path
-              .join(config.repositoryRoot, file)
-              .replace(/\\/g, "/");
-            const normalizedTargetPath = path
-              .normalize(filepath)
-              .replace(/\\/g, "/");
-            if (pathEquals(normalizedSummaryPath, normalizedTargetPath)) {
-              pathInLeftFolder = file;
-              break;
-            }
-          } else if (type === "R" || type === "C") {
-            const parseResult = parseRenamePaths(file);
-            if (!parseResult) {
-              throw new Error(`Unexpected rename line: ${summaryLineRaw}`);
-            }
-
-            const normalizedSummaryPath = path
-              .join(config.repositoryRoot, parseResult.toPath)
-              .replace(/\\/g, "/");
-            const normalizedTargetPath = path
-              .normalize(filepath)
-              .replace(/\\/g, "/");
-            if (pathEquals(normalizedSummaryPath, normalizedTargetPath)) {
-              pathInLeftFolder = parseResult.fromPath;
-              break;
-            }
-          }
-        }
-
-        if (pathInLeftFolder) {
-          const fullPath = path.join(leftFolderAbsolutePath, pathInLeftFolder);
-          try {
-            return yield* Effect.promise(() => fs.readFile(fullPath));
-          } catch (e) {
-            logger.error(
-              `Failed to read original file content from left folder at ${fullPath}: ${String(e)}`,
-            );
-            throw e;
-          }
-        }
-
-        // File was either added or unchanged in this revision.
-        return undefined;
-      } finally {
-        handle.killFakeeditor(fakeEditorPID);
-      }
-    } finally {
-      yield* session.cleanup;
+    const info = yield* getDiffOriginalRevInfo(config, rev);
+    if (!info.parentCommitId) {
+      return undefined;
     }
+
+    const normalizedTarget = path.normalize(filepath).replace(/\\/g, "/");
+    const entry = info.files.find((f) =>
+      pathEquals(f.path.replace(/\\/g, "/"), normalizedTarget),
+    );
+    if (!entry || entry.type === "A") {
+      return undefined;
+    }
+
+    const parentFilepath = entry.renamedFrom
+      ? path.join(config.repositoryRoot, entry.renamedFrom)
+      : entry.path;
+
+    const cli = yield* JJCli;
+    return yield* cli.runBuffer(
+      [
+        "file",
+        "show",
+        "--revision",
+        info.parentCommitId,
+        filepathToFileset(parentFilepath),
+      ],
+      { timeout: 5000, ignoreWorkingCopy: true },
+    );
   });
 
 // --- Helpers ---

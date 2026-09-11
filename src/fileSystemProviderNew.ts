@@ -164,15 +164,12 @@ export class JJFileSystemProviderNew implements FileSystemProvider {
 
     const effect =
       "diffOriginalRev" in params
-        ? // Try getDiffOriginal first (fakeeditor-based, handles renames correctly),
-          // then fall back to readFile
-          getDiffOriginal(repo.config, rev, diffOriginalFilePath).pipe(
+        ? getDiffOriginal(repo.config, rev, diffOriginalFilePath).pipe(
             Effect.flatMap((data) =>
               data
                 ? Effect.succeed(data)
                 : readFileEffect(repo.config, rev, filePath),
             ),
-            Effect.catchAll(() => readFileEffect(repo.config, rev, filePath)),
           )
         : readFileEffect(repo.config, rev, filePath);
 
