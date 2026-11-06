@@ -10,6 +10,7 @@ import {
   computeNewState,
 } from "./services/RepoState";
 import {
+  getBranchDiff,
   getFileList,
   getShowAll,
   getStatus,
@@ -22,7 +23,12 @@ import {
 } from "./services/JjWatchmanSnapshotTriggerRef";
 import type { RepoState } from "./services/RepoState";
 import { repoEventLoop } from "./eventLoop";
-import { computeRenderData, applyRenderData, computeStateSignature } from "./render";
+import {
+  computeRenderData,
+  applyRenderData,
+  computeStateSignature,
+  type ChangesViewMode,
+} from "./render";
 import {
   resolveRepoPath,
   discoverRepositoriesEffect,
@@ -59,6 +65,8 @@ export interface RepoLifecycleDeps {
   readonly getOperationLogManager: () => OperationLogManager | undefined;
   readonly getWorkspacesManager: () => WorkspacesManager | undefined;
   readonly reconcileSelectedRepo: () => Promise<void>;
+  readonly initialChangesViewMode: ChangesViewMode;
+  readonly persistChangesViewMode: (mode: ChangesViewMode) => Promise<void>;
 }
 
 export interface RepoLifecycle {
@@ -70,9 +78,11 @@ export interface RepoLifecycle {
   >;
   readonly poll: () => Effect.Effect<void, never, Vscode>;
   readonly refreshDisplayedState: (repo: RepoHandle) => void;
+  readonly toggleChangesView: () => Promise<void>;
 }
 
 export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
+  let changesViewMode = deps.initialChangesViewMode;
   const workspaceStateLoadTokens = new WeakMap<RepoHandle, number>();
 
   interface RenderCache {
@@ -180,7 +190,8 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
         cached &&
         !opts?.ignoreOpIdCache &&
         cached.operationId !== undefined &&
-        cached.operationId === repo.mainState.operationId
+        cached.operationId === repo.mainState.operationId &&
+        (changesViewMode === "commits" || cached.state.branchDiff !== undefined)
       ) {
         wsState = cached.state;
       } else {
@@ -214,6 +225,10 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
             const fileList = yield* getFileList(wsConfig, {
               cwd: workspace.root,
             });
+            const branchDiff =
+              changesViewMode === "branch"
+                ? yield* getBranchDiff(wsConfig, `${workspace.name}@`)
+                : undefined;
             return computeNewState(
               emptyRepoState,
               repo.mainState.operationId ?? "",
@@ -224,6 +239,7 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
                 show,
               })),
               workspace.root,
+              branchDiff,
             );
           }),
         );
@@ -240,7 +256,7 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
       }
       repo.currentState = wsState;
       markWorkspaceStale(repo, workspace.name, false);
-      const renderKey = `ws:${workspace.name}:${computeStateSignature(wsState)}`;
+      const renderKey = `ws:${workspace.name}:${changesViewMode}:${computeStateSignature(wsState)}`;
       if (renderCache.lastRenderKey === renderKey) {
         return;
       }
@@ -250,12 +266,14 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
           renderData,
           repo.sourceControl,
           repo.workingCopyGroup,
+          repo.branchDiffGroup,
           repo.parentGroups,
           {
             name: workspace.name,
             root: workspace.root,
             repositoryRoot: repo.config.repositoryRoot,
           },
+          changesViewMode,
         );
       }
       deps.decorationProvider.onRefresh(
@@ -311,7 +329,7 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
       void applyWorkspaceState(repo, repo.activeWorkspace, opts);
     } else {
       repo.currentState = newState;
-      const renderKey = `main:${computeStateSignature(newState)}`;
+      const renderKey = `main:${changesViewMode}:${computeStateSignature(newState)}`;
       if (renderCache.lastRenderKey !== renderKey) {
         const renderData = computeRenderData(newState);
         if (renderData) {
@@ -319,7 +337,10 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
             renderData,
             repo.sourceControl,
             repo.workingCopyGroup,
+            repo.branchDiffGroup,
             repo.parentGroups,
+            undefined,
+            changesViewMode,
           );
         }
 
@@ -365,6 +386,29 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
     }
 
     JJGraphView.refresh(repo.config.repositoryRoot);
+  };
+
+  const reloadDisplayedState = async (
+    repo: RepoHandle,
+    opts?: { ignoreOpIdCache?: boolean },
+  ) => {
+    if (repo.activeWorkspace) {
+      await applyWorkspaceState(repo, repo.activeWorkspace, opts);
+      return;
+    }
+    if (changesViewMode === "branch" && !repo.mainState.branchDiff) {
+      const state = await repo.runPromise(
+        checkForUpdates(repo.config, {
+          includeBranchDiff: true,
+          force: true,
+        }),
+      );
+      if (state) {
+        applyRepoStateUpdate(repo, state);
+      }
+      return;
+    }
+    applyRepoStateUpdate(repo, repo.mainState, opts);
   };
 
   const initializeRepo = async (info: {
@@ -420,6 +464,13 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
           ),
           repoScope,
         );
+        const branchDiffGroup = yield* Scope.extend(
+          scopedDisposable(() =>
+            sourceControl.createResourceGroup("branch", "Branch Diff"),
+          ),
+          repoScope,
+        );
+        branchDiffGroup.hideWhenEmpty = true;
 
         sourceControl.inputBox.placeholder = "Describe new change (Ctrl+Enter)";
         sourceControl.acceptInputCommand = {
@@ -469,6 +520,7 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
           activeWorkspace: undefined,
           sourceControl,
           workingCopyGroup,
+          branchDiffGroup,
           parentGroups: [],
           onDidUpdateEmitter,
           dispose: () =>
@@ -493,6 +545,9 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
                   repoConfig: config,
                   watcherStream,
                   onStateChanged,
+                  includeBranchDiff: () =>
+                    changesViewMode === "branch" &&
+                    repo.activeWorkspace === undefined,
                 }).pipe(Effect.provide(repoLayer)),
               ),
             ),
@@ -597,7 +652,10 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
         (repo) =>
           Effect.promise(() =>
             repo.runPromise(
-              checkForUpdates(repo.config).pipe(
+              checkForUpdates(repo.config, {
+                includeBranchDiff:
+                  changesViewMode === "branch" && !repo.activeWorkspace,
+              }).pipe(
                 Effect.tap((state) => {
                   if (!state) {
                     return Effect.void;
@@ -619,7 +677,18 @@ export const makeRepoLifecycle = (deps: RepoLifecycleDeps): RepoLifecycle => {
       ),
     refreshDisplayedState: (repo) => {
       syncWorkingCopyWatcher(repo);
-      applyRepoStateUpdate(repo, repo.mainState, { ignoreOpIdCache: true });
+      void reloadDisplayedState(repo, { ignoreOpIdCache: true }).catch(
+        (error) => {
+          logger.error(
+            `Failed to refresh displayed state for ${repo.config.repositoryRoot}: ${String(error)}`,
+          );
+        },
+      );
+    },
+    toggleChangesView: async () => {
+      changesViewMode = changesViewMode === "commits" ? "branch" : "commits";
+      await deps.persistChangesViewMode(changesViewMode);
+      await Promise.all(deps.repos.map((repo) => reloadDisplayedState(repo)));
     },
   };
 };

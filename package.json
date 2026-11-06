@@ -62,6 +62,12 @@
         "enablement": "!operationInProgress"
       },
       {
+        "command": "jj.toggleChangesView",
+        "title": "Toggle Commit / Branch Diff View",
+        "category": "Jujutsu",
+        "icon": "$(diff)"
+      },
+      {
         "command": "jj.openFileResourceState",
         "title": "Open file",
         "category": "Jujutsu",
@@ -422,6 +428,11 @@
           "group": "navigation"
         },
         {
+          "command": "jj.toggleChangesView",
+          "when": "scmProvider == jj",
+          "group": "navigation"
+        },
+        {
           "command": "jj.new",
           "when": "scmProvider == jj",
           "group": "navigation"
@@ -440,7 +451,7 @@
         },
         {
           "command": "jj.describe",
-          "when": "scmProvider == jj",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@/",
           "group": "inline"
         },
         {
@@ -450,27 +461,27 @@
         },
         {
           "command": "jj.squashToWorkingCopyResourceGroup",
-          "when": "scmProvider == jj && scmResourceGroup != @",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@\\d+$/",
           "group": "inline"
         },
         {
           "command": "jj.restoreResourceGroup",
-          "when": "scmProvider == jj",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@/",
           "group": "inline"
         },
         {
           "command": "jj.editResourceGroup",
-          "when": "scmProvider == jj && scmResourceGroup != @",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@\\d+$/",
           "group": "inline"
         },
         {
           "command": "jj.abandonResourceGroup",
-          "when": "scmProvider == jj && scmResourceGroup != @",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@\\d+$/",
           "group": "inline"
         },
         {
           "command": "jj.openReview",
-          "when": "scmProvider == jj",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@/",
           "group": "1_review"
         }
       ],
@@ -482,7 +493,7 @@
         },
         {
           "command": "jj.restoreResourceState",
-          "when": "scmProvider == jj",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@/",
           "group": "inline"
         },
         {
@@ -497,14 +508,14 @@
         },
         {
           "command": "jj.squashToWorkingCopyResourceState",
-          "when": "scmProvider == jj && scmResourceGroup != @",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@\\d+$/",
           "group": "inline"
         }
       ],
       "scm/resourceFolder/context": [
         {
           "command": "jj.restoreResourceState",
-          "when": "scmProvider == jj",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@/",
           "group": "inline"
         },
         {
@@ -514,7 +525,7 @@
         },
         {
           "command": "jj.squashToWorkingCopyResourceState",
-          "when": "scmProvider == jj && scmResourceGroup != @",
+          "when": "scmProvider == jj && scmResourceGroup =~ /^@\\d+$/",
           "group": "inline"
         }
       ],

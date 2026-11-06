@@ -27,6 +27,9 @@ export function buildRepoSCMProxy(
     get workingCopyResourceGroup() {
       return repo.workingCopyGroup;
     },
+    get branchDiffResourceGroup() {
+      return repo.branchDiffGroup;
+    },
     get parentResourceGroups() {
       return repo.parentGroups;
     },

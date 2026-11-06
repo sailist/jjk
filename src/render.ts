@@ -1,13 +1,16 @@
 import * as vscode from "vscode";
 import path from "path";
 import { toJJUri, type JJUriParams } from "./uri";
-import type { Change, FileStatus } from "./types";
+import type { BranchDiff, Change, FileStatus } from "./types";
 import type { RepoState } from "./services/RepoState";
+
+export type ChangesViewMode = "commits" | "branch";
 
 export interface RenderData {
   workingCopy: Change;
   workingCopyFileStatuses: FileStatus[];
   parentChanges: { change: Change; fileStatuses: FileStatus[] }[];
+  branchDiff: BranchDiff | undefined;
   totalFileCount: number;
 }
 
@@ -28,6 +31,7 @@ export function computeRenderData(state: RepoState): RenderData | null {
     workingCopy: state.status.workingCopy,
     workingCopyFileStatuses: state.status.fileStatuses,
     parentChanges,
+    branchDiff: state.branchDiff,
     totalFileCount: state.status.fileStatuses.length,
   };
 }
@@ -62,6 +66,13 @@ export function computeStateSignature(state: RepoState): string {
         show ? [...show.conflictedFiles].sort() : [],
       ];
     }),
+    state.branchDiff
+      ? [
+          state.branchDiff.fromRev,
+          state.branchDiff.toRev,
+          fileSignature(state.branchDiff.fileStatuses),
+        ]
+      : null,
   ]);
 }
 
@@ -114,8 +125,10 @@ export function applyRenderData(
   renderData: RenderData,
   sourceControl: vscode.SourceControl,
   workingCopyGroup: vscode.SourceControlResourceGroup,
+  branchDiffGroup: vscode.SourceControlResourceGroup,
   parentGroups: vscode.SourceControlResourceGroup[],
   workspace?: { name: string; root: string; repositoryRoot: string },
+  viewMode: ChangesViewMode = "commits",
 ): vscode.SourceControlResourceGroup[] {
   const revParams = (rev: string, filePath: string): JJUriParams =>
     workspace
@@ -134,7 +147,50 @@ export function applyRenderData(
         }
       : { diffOriginalRev: rev };
 
-  // Update working copy
+  workingCopyGroup.hideWhenEmpty = viewMode === "branch";
+  branchDiffGroup.hideWhenEmpty = viewMode !== "branch";
+  if (viewMode === "branch") {
+    const fromRev = renderData.branchDiff?.fromRev ?? "";
+    const fileStatuses = renderData.branchDiff?.fileStatuses ?? [];
+    workingCopyGroup.resourceStates = [];
+    branchDiffGroup.label = workspace
+      ? `Branch Diff (${workspace.name})`
+      : "Branch Diff";
+    branchDiffGroup.resourceStates = fileStatuses.map((fileStatus) => {
+      const originalPath =
+        fileStatus.renamedFrom &&
+        (workspace?.root ?? sourceControl.rootUri?.fsPath)
+          ? path.join(
+              workspace?.root ?? sourceControl.rootUri!.fsPath,
+              fileStatus.renamedFrom,
+            )
+          : fileStatus.path;
+      const afterUri = vscode.Uri.file(fileStatus.path);
+      return {
+        resourceUri: afterUri,
+        decorations: {
+          strikeThrough: fileStatus.type === "D",
+          tooltip: path.basename(fileStatus.file),
+        },
+        command: getResourceStateCommand(
+          fileStatus,
+          toJJUri(
+            vscode.Uri.file(originalPath),
+            revParams(fromRev, originalPath),
+          ),
+          afterUri,
+          "(Branch Diff)",
+        ),
+      };
+    });
+    sourceControl.count = fileStatuses.length;
+    for (const group of parentGroups) {
+      group.dispose();
+    }
+    return [];
+  }
+
+  branchDiffGroup.resourceStates = [];
   workingCopyGroup.label = getLabel(
     workspace ? `Working Copy (${workspace.name})` : "Working Copy",
     renderData.workingCopy,

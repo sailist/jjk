@@ -152,6 +152,12 @@ export async function activate(context: vscode.ExtensionContext) {
     getWorkspacesManager: () => extensionViews?.workspacesManager,
     reconcileSelectedRepo: () =>
       extensionRuntime.runPromise(selectedRepoController.reconcileSelection()),
+    initialChangesViewMode: context.workspaceState.get(
+      "changesViewMode",
+      "commits",
+    ),
+    persistChangesViewMode: (mode) =>
+      extensionRuntime.runPromise(updateWorkspaceState("changesViewMode", mode)),
   });
   await repoLifecycle.initializeDiscoveredRepos();
   const { syncReposWithWorkspaceFolders, poll } = repoLifecycle;
@@ -254,6 +260,12 @@ export async function activate(context: vscode.ExtensionContext) {
         graphLogger,
       );
     }),
+  );
+  await registerScoped(() =>
+    vscode.commands.registerCommand(
+      "jj.toggleChangesView",
+      repoLifecycle.toggleChangesView,
+    ),
   );
 
   // --- Workspace folder change listener ---

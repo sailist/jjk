@@ -9,6 +9,12 @@ export type FileStatus = {
   renamedFrom?: string;
 };
 
+export interface BranchDiff {
+  fromRev: string;
+  toRev: string;
+  fileStatuses: FileStatus[];
+}
+
 export interface Change {
   changeId: string;
   commitId: string;

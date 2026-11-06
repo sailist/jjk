@@ -30,13 +30,20 @@ export const makeRepoLocator = (
     ),
   findRepoByResourceGroup: (rg) =>
     repos().find(
-      (repo) => repo.workingCopyGroup === rg || repo.parentGroups.includes(rg),
+      (repo) =>
+        repo.workingCopyGroup === rg ||
+        repo.branchDiffGroup === rg ||
+        repo.parentGroups.includes(rg),
     ),
   getResourceGroupFromResourceState: (resourceState) => {
     const resourceUri = resourceState.resourceUri;
 
     for (const repo of repos()) {
-      const groups = [repo.workingCopyGroup, ...repo.parentGroups];
+      const groups = [
+        repo.workingCopyGroup,
+        repo.branchDiffGroup,
+        ...repo.parentGroups,
+      ];
       for (const group of groups) {
         if (
           group.resourceStates.some(

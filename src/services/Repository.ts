@@ -408,6 +408,36 @@ export const getDiffSummary = (
     return parseDiffSummary(config.repositoryRoot, output);
   });
 
+export const getBranchDiff = (
+  config: RepositoryConfig,
+  toRev: string,
+): Effect.Effect<
+  import("../types").BranchDiff,
+  JJCliError | JJImmutableError,
+  RepositoryEnv
+> =>
+  Effect.gen(function* () {
+    const fromRev = `roots(::(${toRev}) & mutable())-`;
+    const cli = yield* JJCli;
+    const baseOutput = yield* cli.run(
+      [
+        "log",
+        "--no-graph",
+        "-r",
+        fromRev,
+        "-n",
+        "1",
+        "-T",
+        "commit_id",
+      ],
+      { timeout: 5000, ignoreWorkingCopy: true },
+    );
+    const fileStatuses = baseOutput.trim()
+      ? yield* getDiffSummary(config, fromRev, toRev)
+      : [];
+    return { fromRev, toRev, fileStatuses };
+  });
+
 // --- Mutation operations ---
 
 export const jjNew = (

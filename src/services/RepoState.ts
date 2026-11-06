@@ -1,6 +1,7 @@
 import { Context, Effect, Ref } from "effect";
 import path from "path";
 import type {
+  BranchDiff,
   FileStatus,
   RepositoryConfig,
   RepositoryStatus,
@@ -14,6 +15,7 @@ import type { ExtensionResources } from "./ExtensionResources";
 import type { JjWatchmanRegisterSnapshotTriggerRef } from "./JjWatchmanSnapshotTriggerRef";
 import type { Vscode } from "./Vscode";
 import {
+  getBranchDiff,
   getLatestOperationId,
   getStatus,
   getFileList,
@@ -27,6 +29,7 @@ export interface RepoState {
   conflictedFilesByChange: Map<string, Set<string>>;
   trackedFiles: Set<string>;
   parentShowResults: Map<string, Show>;
+  branchDiff: BranchDiff | undefined;
 }
 
 export class RepoStateRef extends Context.Tag("RepoStateRef")<
@@ -41,6 +44,7 @@ export const emptyRepoState: RepoState = {
   conflictedFilesByChange: new Map(),
   trackedFiles: new Set(),
   parentShowResults: new Map(),
+  branchDiff: undefined,
 };
 
 export function computeNewState(
@@ -50,6 +54,7 @@ export function computeNewState(
   trackedFilesList: string[],
   parentShowResults: { changeId: string; show: Show }[],
   repositoryRoot: string,
+  branchDiff?: BranchDiff,
 ): RepoState {
   const newTrackedFiles = new Set<string>();
   const newParentShowResultsMap = new Map<string, Show>();
@@ -83,11 +88,13 @@ export function computeNewState(
     conflictedFilesByChange: newConflictedFilesByChange,
     trackedFiles: newTrackedFiles,
     parentShowResults: newParentShowResultsMap,
+    branchDiff,
   };
 }
 
 export const checkForUpdates = (
   config: RepositoryConfig,
+  opts?: { includeBranchDiff?: boolean; force?: boolean },
 ): Effect.Effect<
   RepoState | null,
   JJCliError | JJImmutableError | RepositoryDataError,
@@ -101,7 +108,7 @@ export const checkForUpdates = (
     const stateRef = yield* RepoStateRef;
     const latestOpId = yield* getLatestOperationId(config);
     const current = yield* Ref.get(stateRef);
-    if (current.operationId === latestOpId) {
+    if (current.operationId === latestOpId && !opts?.force) {
       return null;
     }
 
@@ -115,6 +122,9 @@ export const checkForUpdates = (
       ),
       { concurrency: "unbounded" },
     );
+    const branchDiff = opts?.includeBranchDiff
+      ? yield* getBranchDiff(config, "@")
+      : undefined;
 
     const newState = computeNewState(
       current,
@@ -123,6 +133,7 @@ export const checkForUpdates = (
       fileList,
       parentShows,
       config.repositoryRoot,
+      branchDiff,
     );
     yield* Ref.set(stateRef, newState);
     return newState;

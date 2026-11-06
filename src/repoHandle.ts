@@ -26,6 +26,7 @@ export interface RepoHandle {
   activeWorkspace: { name: string; root: string } | undefined;
   sourceControl: vscode.SourceControl;
   workingCopyGroup: vscode.SourceControlResourceGroup;
+  branchDiffGroup: vscode.SourceControlResourceGroup;
   parentGroups: vscode.SourceControlResourceGroup[];
   onDidUpdateEmitter: vscode.EventEmitter<void>;
   dispose(): Promise<void>;
@@ -35,6 +36,7 @@ export interface RepositorySourceControlManager {
   readonly repositoryRoot: string;
   readonly sourceControl: vscode.SourceControl;
   readonly workingCopyResourceGroup: vscode.SourceControlResourceGroup;
+  readonly branchDiffResourceGroup: vscode.SourceControlResourceGroup;
   readonly parentResourceGroups: vscode.SourceControlResourceGroup[];
   readonly status: RepositoryStatus | undefined;
   readonly parentShowResults: Map<string, Show>;

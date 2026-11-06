@@ -12,6 +12,7 @@ export interface RepoEventLoopDeps {
   repoConfig: RepositoryConfig;
   watcherStream: Stream.Stream<void>;
   onStateChanged: (newState: RepoState) => Effect.Effect<void>;
+  includeBranchDiff: () => boolean;
 }
 
 export const repoEventLoop = (
@@ -50,7 +51,9 @@ export const repoEventLoop = (
     yield* Stream.fromQueue(updateQueue).pipe(
       Stream.debounce(Duration.millis(100)),
       Stream.runForEach(() =>
-        checkForUpdates(deps.repoConfig).pipe(
+        checkForUpdates(deps.repoConfig, {
+          includeBranchDiff: deps.includeBranchDiff(),
+        }).pipe(
           Effect.tap((newState) =>
             newState ? deps.onStateChanged(newState) : Effect.void,
           ),

@@ -134,6 +134,72 @@ suite("SCM Integration Tests", () => {
     );
   });
 
+  test("toggle Changes between individual commits and the whole branch diff", async function () {
+    this.timeout(30_000);
+    const repoSCM = workspaceSCM.repoSCMs[0];
+    const testFileName = "branch-diff-integration-file.txt";
+    const testFilePath = path.join(repoRoot, testFileName);
+    const showCommits = async () => {
+      if (!repoSCM.branchDiffResourceGroup.hideWhenEmpty) {
+        await vscode.commands.executeCommand("jj.toggleChangesView");
+      }
+    };
+
+    await showCommits();
+    try {
+      await fs.writeFile(testFilePath, "first commit\n");
+      await vscode.commands.executeCommand("jj.refresh");
+      await vscode.commands.executeCommand("jj.new", repoSCM.sourceControl);
+      await vscode.commands.executeCommand("jj.refresh");
+      await fs.appendFile(testFilePath, "working copy\n");
+      await vscode.commands.executeCommand("jj.refresh");
+
+      await vscode.commands.executeCommand("jj.toggleChangesView");
+
+      assert.strictEqual(repoSCM.parentResourceGroups.length, 0);
+      assert.strictEqual(repoSCM.workingCopyResourceGroup.hideWhenEmpty, true);
+      assert.strictEqual(
+        repoSCM.workingCopyResourceGroup.resourceStates.length,
+        0,
+      );
+      assert.strictEqual(repoSCM.branchDiffResourceGroup.hideWhenEmpty, false);
+      const branchStates =
+        repoSCM.branchDiffResourceGroup.resourceStates.filter((state) =>
+          state.resourceUri.fsPath.endsWith(testFileName),
+        );
+      assert.strictEqual(
+        branchStates.length,
+        1,
+        "Expected one aggregated branch entry for a file changed in multiple commits",
+      );
+      assert.strictEqual(
+        repoSCM.sourceControl.count,
+        repoSCM.branchDiffResourceGroup.resourceStates.length,
+      );
+
+      await vscode.commands.executeCommand("jj.toggleChangesView");
+
+      assert.strictEqual(repoSCM.branchDiffResourceGroup.hideWhenEmpty, true);
+      assert.strictEqual(repoSCM.workingCopyResourceGroup.hideWhenEmpty, false);
+      assert.ok(
+        repoSCM.parentResourceGroups.some((group) =>
+          group.resourceStates.some((state) =>
+            state.resourceUri.fsPath.endsWith(testFileName),
+          ),
+        ),
+        "Expected the individual commit groups to be restored",
+      );
+      assert.ok(
+        repoSCM.workingCopyResourceGroup.resourceStates.some((state) =>
+          state.resourceUri.fsPath.endsWith(testFileName),
+        ),
+        "Expected the working copy group to be restored",
+      );
+    } finally {
+      await showCommits();
+    }
+  });
+
   test("active workspace changes view refreshes on file save without manual refresh", async function () {
     this.timeout(30_000);
     const repoSCM = workspaceSCM.repoSCMs[0];
